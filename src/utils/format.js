@@ -53,4 +53,18 @@ function matchEmbed(view, title) {
   return embed;
 }
 
-module.exports = { COLORS, mention, positionLabel, matchEmbed };
+/** 대전 참가자 목록 Embed (참가 순서대로 번호, 포지션, 팀 표시) */
+function participantsEmbed(view, title) {
+  const { match, participants } = view;
+  const lines = participants.map((p, i) => {
+    const team = p.side ? `${p.side === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[p.side]}${p.is_team_locked ? ' 📌' : ''}` : '⚪ 팀 미배정';
+    return `**${i + 1}.** ${mention(p.discord_user_id)} · \`${positionLabel(p.position)}\` · ${team}`;
+  });
+  return new EmbedBuilder()
+    .setTitle(title || `대전 #${match.id} 참가자 (${participants.length}/${MATCH_SIZE})`)
+    .setColor(COLORS.NEUTRAL)
+    .setDescription(lines.length ? lines.join('\n') : '아직 참가자가 없습니다.')
+    .setFooter({ text: `상태: ${MATCH_STATUS_LABELS[match.status]} · 📌 = 팀 직접 등록 (셔플 제외)` });
+}
+
+module.exports = { COLORS, mention, positionLabel, matchEmbed, participantsEmbed };
