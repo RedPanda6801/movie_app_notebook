@@ -215,7 +215,16 @@ src/
   constants.js          # 인원, 포지션, 팀, 상태, 승점 상수
   db/schema.sql         # SQLite 스키마
   db/index.js           # DB 열기 + 스키마 적용
-  services/             # 비즈니스 로직 (디스코드와 독립, 테스트 대상)
+  repositories/         # 테이블별 쿼리 (SQL은 이 폴더에만 둔다)
+    index.js            # createRepositories(db) + transaction(fn)
+    guildRepository.js              # guild
+    accountRepository.js            # account
+    guildMemberRepository.js        # guild_member (+ 서버 승점 랭킹)
+    matchRepository.js              # match
+    teamRepository.js               # team
+    matchParticipantRepository.js   # match_participant (+ 개인 전적)
+    matchRecordRepository.js        # match_record
+  services/             # 비즈니스 로직 (Repository만 호출, 디스코드와 독립, 테스트 대상)
     guildService.js     # 서버 등록/퇴장
     accountService.js   # 계정관리 (등록/탈퇴)
     matchService.js     # 대전관리 - 대전, 사용자 관리
@@ -230,8 +239,11 @@ test/                   # node:test 기반 테스트 (npm test)
 
 ## 개발 규칙
 
-- 비즈니스 로직은 `services/`에 두고, `commands/`는 입력 파싱과 응답 표시만 담당한다.
+- 계층 구조: `commands/` → `services/` → `repositories/` → DB
+  - `commands/`: 입력 파싱과 응답 표시만 담당한다.
+  - `services/`: 비즈니스 로직. **DB에 직접 쿼리하지 않고 Repository만 호출한다.**
+  - `repositories/`: **테이블별 파일**(`<테이블>Repository.js`)에 SQL을 둔다. 여러 테이블을 JOIN하는 조회는 결과의 기준이 되는 테이블의 Repository에 둔다.
 - 사용자에게 보여줄 오류는 `UserError`로 던진다. 커맨드 처리기에서 본인에게만 보이는(ephemeral) 메시지로 표시한다.
-- 상태를 바꾸는 서비스 함수는 `db.transaction`으로 감싼다.
+- 상태를 바꾸는 서비스 함수는 `repos.transaction(fn)`으로 감싼다.
 - 모든 조회와 변경은 현재 서버(`guild.id`) 범위로 한정한다.
 - 변경 후 `npm test`로 테스트를 확인한다.
