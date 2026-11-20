@@ -1,0 +1,20 @@
+{
+  "name": "discord-5v5-match-bot",
+  "version": "1.0.0",
+  "description": "디스코드 서버에서 5대5 대전을 관리하는 봇",
+  "main": "src/index.js",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0",
+    "discord.js": "^14.28.1",
+    "dotenv": "^18.0.10"
+  }
+}
