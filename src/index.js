@@ -4,10 +4,17 @@ const { openDatabase } = require('./db');
 const { createServices } = require('./services');
 const { commands } = require('./commands');
 const { UserError } = require('./utils/errors');
+const {
+  createCommandLogger,
+  describeCommand,
+  describeUser,
+  describeReply,
+} = require('./utils/commandLogger');
 
 const db = openDatabase(config.databasePath);
 const services = createServices(db);
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
+const commandLogger = createCommandLogger({ dir: config.logDir, timeZone: config.logTimeZone });
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -41,6 +48,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const command = commandMap.get(interaction.commandName);
   if (!command) return;
 
+  // 커맨드가 보낸 응답 내용을 로그의 결과 메시지로 쓰기 위해 reply를 감싼다.
+  let resultMessage = '';
+  const originalReply = interaction.reply.bind(interaction);
+  interaction.reply = (payload) => {
+    resultMessage = describeReply(payload);
+    return originalReply(payload);
+  };
+
+  let success = true;
   try {
     if (!interaction.inGuild()) {
       throw new UserError('이 봇의 커맨드는 서버 채널에서만 사용할 수 있습니다.');
@@ -48,16 +64,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const guild = services.guilds.ensureGuild(interaction.guildId, interaction.guild?.name ?? null);
     await command.execute(interaction, { services, guild });
   } catch (err) {
+    success = false;
     const isUserError = err instanceof UserError;
     if (!isUserError) console.error(`/${interaction.commandName} 처리 중 오류:`, err);
     const content = isUserError ? `⚠️ ${err.message}` : '❌ 요청을 처리하는 중 오류가 발생했습니다.';
+    resultMessage = isUserError ? content : `${content} (${err?.message ?? err})`;
     const payload = { content, flags: MessageFlags.Ephemeral };
     try {
       if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
-      else await interaction.reply(payload);
+      else await originalReply(payload);
     } catch (replyErr) {
       console.error('오류 응답 전송 실패:', replyErr);
     }
+  }
+
+  // 서버별 커맨드 로그 (logs/<서버 ID>.log)
+  try {
+    await commandLogger.log({
+      discordGuildId: interaction.guildId,
+      command: describeCommand(interaction),
+      user: describeUser(interaction),
+      success,
+      message: resultMessage,
+    });
+  } catch (logErr) {
+    console.error('커맨드 로그 기록 실패:', logErr);
   }
 });
 
