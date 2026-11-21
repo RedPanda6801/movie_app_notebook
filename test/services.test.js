@@ -2,220 +2,217 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setup } = require('./helpers');
 const { UserError } = require('../src/utils/errors');
+const { normalizeGameName } = require('../src/services/matchService');
 
 const isUserError = (pattern) => (err) => err instanceof UserError && pattern.test(err.message);
 
 test('계정: 사용자당 1계정, 서버별 가입/탈퇴', () => {
-  const { services, guild, register } = setup();
+  const { db, services, guild, register } = setup();
   const guild2 = services.guilds.ensureGuild('guild-2', '두번째 서버');
-
   register('u1');
   assert.throws(() => register('u1'), isUserError(/이미/));
-  register('u1', guild2); // 다른 서버에는 가입 가능
-
-
-  services.accounts.withdraw({ guildId: guild.id, discordUserId: 'u1' });
-  assert.throws(() => services.accounts.getActiveMember(guild.id, 'u1'), isUserError(/등록된 계정이 없/));
-  // 다른 서버 가입에는 영향 없음
-  assert.equal(services.accounts.getActiveMember(guild2.id, 'u1').status, 'ACTIVE');
-
-  const { reactivated } = register('u1');
-  assert.equal(reactivated, true);
-});
-
-test('account 행은 서버가 달라도 1개만 생긴다', () => {
-  const { db, services, register } = setup();
-  const guild2 = services.guilds.ensureGuild('guild-2');
-  register('u1');
   register('u1', guild2);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM account').get().n, 1);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM guild_member').get().n, 2);
+
+  services.accounts.withdraw({ guildId: guild.id, discordUserId: 'u1' });
+  assert.throws(() => services.accounts.getActiveMember(guild.id, 'u1'), isUserError(/계정 등록/));
+  assert.equal(services.accounts.getActiveMember(guild2.id, 'u1').status, 'ACTIVE');
+  assert.equal(register('u1').reactivated, true);
 });
 
-test('대전: 미등록자는 참가 불가, 첫 참가 시 대전 자동 생성, 10명 제한', () => {
-  const { services, guild, users, register, join } = setup();
-  assert.throws(() => join('nobody'), isUserError(/계정 등록/));
+test('롤 아이디 형식 검사', () => {
+  assert.equal(normalizeGameName('  Hide on bush # KR1 '), 'Hide on bush#KR1');
+  assert.throws(() => normalizeGameName('태그없음'), isUserError(/게임이름#태그/));
+  assert.throws(() => normalizeGameName('a#b#c'), isUserError(/게임이름#태그/));
+});
 
+test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () => {
+  const { services, guild, register, create } = setup();
+  assert.throws(() => create('nobody'), isUserError(/계정 등록/));
+  register('u1');
+  assert.throws(() => create('u1', 0), isUserError(/1~10판/));
+  assert.throws(() => create('u1', 11), isUserError(/1~10판/));
+
+  const match = create('u1', 5);
+  assert.equal(match.game_count, 5);
+  const view = services.matches.getMatchView(match.id);
+  assert.equal(view.participants.length, 1);
+  assert.equal(view.participants[0].game_name, 'u1#KR1');
+  assert.equal(view.creatorDiscordUserId, 'u1');
+  assert.throws(() => create('u1'), isUserError(/하나만/));
+
+  services.matches.setMatchMessage(match.id, 'chan', 'msg');
+  assert.equal(services.matches.getMatchView(match.id).match.message_id, 'msg');
+  assert.equal(services.guilds.ensureGuild('guild-1').id, guild.id);
+});
+
+test('대전 참가: 롤 아이디 필수, 10명 제한, 옛 대전 버튼 차단, 마지막 아이디 기억', () => {
+  const { services, guild, users, register, create, join } = setup();
   users.forEach((u) => register(u));
-  const first = join(users[0]);
-  assert.equal(first.created, true);
-  assert.throws(() => join(users[0]), isUserError(/이미/));
-  for (const u of users.slice(1, 10)) join(u);
-  assert.throws(() => join(users[10]), isUserError(/모두 찼/));
-
-  assert.equal(services.matches.getMatchView(first.match.id).participants.length, 10);
-  assert.equal(services.matches.leave({ guildId: guild.id, discordUserId: users[0] }).count, 9);
-});
-
-test('대전: 서버당 진행 중인 대전은 1개, 서버끼리는 독립', () => {
-  const { services, guild, register } = setup();
-  const guild2 = services.guilds.ensureGuild('guild-2');
-  register('u1');
-  register('u1', guild2);
-  services.matches.createMatch({ guildId: guild.id, discordUserId: 'u1', channelId: 'c' });
+  const match = create(users[0]);
   assert.throws(
-    () => services.matches.createMatch({ guildId: guild.id, discordUserId: 'u1', channelId: 'c' }),
-    isUserError(/하나만/),
+    () => services.matches.join({ guildId: guild.id, discordUserId: users[1], gameName: '형식틀림' }),
+    isUserError(/게임이름#태그/),
   );
-  // 다른 서버에서는 별도로 열 수 있다
-  services.matches.createMatch({ guildId: guild2.id, discordUserId: 'u1', channelId: 'c' });
+  assert.throws(
+    () => services.matches.join({ guildId: guild.id, discordUserId: users[1], matchId: match.id + 1, gameName: 'abc#KR1' }),
+    isUserError(/종료되었거나 취소/),
+  );
+  for (const u of users.slice(1, 10)) join(u);
+  assert.throws(() => join(users[1]), isUserError(/이미/));
+  assert.throws(() => join(users[10]), isUserError(/모두 찼/));
+  assert.equal(services.accounts.getActiveMember(guild.id, users[1]).last_game_name, `${users[1]}#KR1`);
+
+  assert.equal(services.matches.leave({ guildId: guild.id, discordUserId: users[1] }).count, 9);
 });
 
-test('DB 제약: 서버당 활성 대전 1개 (부분 UNIQUE 인덱스)', () => {
-  const { db, guild } = setup();
-  db.prepare('INSERT INTO match (guild_id) VALUES (?)').run(guild.id);
-  assert.throws(() => db.prepare('INSERT INTO match (guild_id) VALUES (?)').run(guild.id), /UNIQUE/);
-});
-
-test('포지션 선택/해제', () => {
-  const { services, guild, register, join } = setup();
+test('포지션 등록/변경/해제 (대전마다 따로)', () => {
+  const { services, guild, register, create } = setup();
   register('u1');
-  const { match } = join('u1');
+  const match = create('u1');
   services.matches.setPosition({ guildId: guild.id, discordUserId: 'u1', position: 'MID' });
   assert.equal(services.matches.getMatchView(match.id).participants[0].position, 'MID');
   services.matches.setPosition({ guildId: guild.id, discordUserId: 'u1', position: null });
   assert.equal(services.matches.getMatchView(match.id).participants[0].position, null);
 });
 
-test('팀 등록/탈퇴: 팀당 5명 제한', () => {
-  const { services, guild, users, register, join } = setup();
-  users.slice(0, 10).forEach((u) => {
-    register(u);
-    join(u);
-  });
-  for (const u of users.slice(0, 5)) {
-    services.teams.joinTeam({ guildId: guild.id, discordUserId: u, side: 'RED' });
-  }
+test('권한: 대전 시작/기록/종료는 관리자 또는 등록자만', () => {
+  const { services, guild, users, fill } = setup();
+  fill();
   assert.throws(
-    () => services.teams.joinTeam({ guildId: guild.id, discordUserId: users[5], side: 'RED' }),
-    isUserError(/이미 5명/),
+    () => services.matches.checkManager({ guildId: guild.id, discordUserId: users[1] }),
+    isUserError(/권한이 없습니다/),
   );
-  services.teams.leaveTeam({ guildId: guild.id, discordUserId: users[0] });
-  assert.throws(
-    () => services.teams.leaveTeam({ guildId: guild.id, discordUserId: users[0] }),
-    isUserError(/소속된 팀이 없/),
-  );
-  services.teams.joinTeam({ guildId: guild.id, discordUserId: users[5], side: 'RED' });
+  services.matches.checkManager({ guildId: guild.id, discordUserId: users[0] });
+  // 관리자는 계정 등록이 없어도 관리할 수 있다
+  services.matches.checkManager({ guildId: guild.id, discordUserId: 'admin', isAdmin: true });
 });
 
-test('셔플: 10명 미만이면 불가, 팀 등록자는 유지, 포지션 우선', () => {
-  const { services, guild, users, register, join } = setup();
-  const positions = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
-  users.slice(0, 10).forEach((u, i) => {
-    register(u);
-    join(u);
-    services.matches.setPosition({ guildId: guild.id, discordUserId: u, position: positions[i % 5] });
-  });
-  services.matches.leave({ guildId: guild.id, discordUserId: users[9] });
-  assert.throws(() => services.teams.shuffle({ guildId: guild.id, discordUserId: users[0] }), isUserError(/10명/));
+test('대전 시작: 10명이 모여야 가능 (팀 구성은 필요 없음)', () => {
+  const { services, guild, users, register, create, join } = setup();
+  users.slice(0, 10).forEach((u) => register(u));
+  create(users[0]);
+  users.slice(1, 9).forEach((u) => join(u));
+  assert.throws(
+    () => services.matches.start({ guildId: guild.id, discordUserId: users[0] }),
+    isUserError(/10명이어야/),
+  );
   join(users[9]);
-  services.matches.setPosition({ guildId: guild.id, discordUserId: users[9], position: 'SUPPORT' });
-
-  services.teams.joinTeam({ guildId: guild.id, discordUserId: users[0], side: 'BLUE' }); // TOP
-  services.teams.joinTeam({ guildId: guild.id, discordUserId: users[1], side: 'BLUE' }); // JUNGLE
-
-  for (let i = 0; i < 20; i += 1) {
-    const view = services.teams.shuffle({ guildId: guild.id, discordUserId: users[0] });
-    assert.equal(view.red.length, 5);
-    assert.equal(view.blue.length, 5);
-    assert.equal(view.unassigned.length, 0);
-    const blueIds = view.blue.map((p) => p.discord_user_id);
-    assert.ok(blueIds.includes(users[0]) && blueIds.includes(users[1]));
-    for (const team of [view.red, view.blue]) {
-      assert.equal(new Set(team.map((p) => p.position)).size, 5, '팀마다 포지션 5개가 모두 달라야 한다');
-    }
-  }
-});
-
-test('전체 흐름: 셔플 → 시작 → 결과 → 승점 (1승 1점, 감점 없음)', () => {
-  const { services, guild, users, register, join } = setup();
-  users.slice(0, 10).forEach((u) => {
-    register(u);
-    join(u);
-  });
-  const owner = users[0];
-  const other = users[1];
-
+  const view = services.matches.start({ guildId: guild.id, discordUserId: users[0] });
+  assert.equal(view.match.status, 'IN_PROGRESS');
+  assert.throws(() => services.matches.leave({ guildId: guild.id, discordUserId: users[1] }), isUserError(/이미 시작/));
   assert.throws(
-    () => services.matches.start({ guildId: guild.id, discordUserId: owner }),
-    isUserError(/팀 구성/),
-  );
-  services.teams.shuffle({ guildId: guild.id, discordUserId: other });
-  assert.throws(
-    () => services.matches.start({ guildId: guild.id, discordUserId: other }),
-    isUserError(/대전을 만든 사람/),
-  );
-  services.matches.start({ guildId: guild.id, discordUserId: other, isServerManager: true });
-
-  // 진행 중에는 참가자/팀 변경 불가
-  assert.throws(() => services.matches.leave({ guildId: guild.id, discordUserId: other }), isUserError(/이미 시작/));
-  assert.throws(
-    () => services.accounts.withdraw({ guildId: guild.id, discordUserId: other }),
+    () => services.accounts.withdraw({ guildId: guild.id, discordUserId: users[1] }),
     isUserError(/진행 중인 대전/),
   );
+});
 
-  const view = services.matches.finish({ guildId: guild.id, discordUserId: owner, winnerSide: 'RED' });
+test('판 기록: 승리자 5명, 판 수만큼만, 판 번호 순서', () => {
+  const { services, guild, users, fill } = setup();
+  fill(2);
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  assert.throws(() => services.matches.checkCanRecord(base), isUserError(/대전 시작/));
+  services.matches.start(base);
+
+  assert.equal(services.matches.checkCanRecord(base).gameNo, 1);
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 4) }),
+    isUserError(/정확히 5명/),
+  );
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: [...users.slice(0, 4), 'outsider'] }),
+    isUserError(/참가자만/),
+  );
+  services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 5), screenshotPath: 'a.png' });
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(5, 10) }),
+    isUserError(/이미 기록/),
+  );
+  services.matches.recordGame({ ...base, gameNo: 2, winnerDiscordUserIds: users.slice(0, 5) });
+  assert.throws(() => services.matches.checkCanRecord(base), isUserError(/모두 기록/));
+
+  const { games } = services.matches.getMatchView(services.matches.getActiveMatch(guild.id).id);
+  assert.deepEqual(games.map((g) => g.game_no), [1, 2]);
+  assert.equal(games[0].screenshot_path, 'a.png');
+  assert.deepEqual([...games[0].winnerDiscordUserIds].sort(), users.slice(0, 5).sort());
+});
+
+test('승점: 판 1승당 1점, 종료된 대전만 반영, 서버별 계산', () => {
+  const { services, guild, users, fill } = setup();
+  const guild2 = services.guilds.ensureGuild('guild-2');
+  fill(3);
+  users.slice(0, 10).forEach((u) => services.accounts.register({ guildId: guild2.id, discordUserId: u }));
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  services.matches.start(base);
+  services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 5) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerDiscordUserIds: users.slice(0, 5) });
+  services.matches.recordGame({ ...base, gameNo: 3, winnerDiscordUserIds: users.slice(5, 10) });
+
+  // 종료 전에는 반영되지 않는다
+  assert.equal(services.points.getStats(guild.id, users[0]).points, 0);
+  const view = services.matches.finish(base);
   assert.equal(view.match.status, 'FINISHED');
-  assert.equal(view.record.winner_side, 'RED');
   assert.equal(services.matches.getActiveMatch(guild.id), null);
 
-  const winner = view.red[0].discord_user_id;
-  const loser = view.blue[0].discord_user_id;
-  assert.deepEqual(
-    (({ games, wins, losses, points }) => ({ games, wins, losses, points }))(services.points.getStats(guild.id, winner)),
-    { games: 1, wins: 1, losses: 0, points: 1 },
-  );
-  assert.equal(services.points.getStats(guild.id, loser).points, 0);
-
-  const ranking = services.points.getRanking(guild.id);
-  assert.equal(ranking[0].points, 1);
-  assert.equal(ranking.filter((r) => r.points === 1).length, 5);
-
-  // 다음 대전을 새로 열 수 있다
-  assert.equal(join(owner).created, true);
+  const pick = ({ games, wins, losses, points }) => ({ games, wins, losses, points });
+  assert.deepEqual(pick(services.points.getStats(guild.id, users[0])), { games: 3, wins: 2, losses: 1, points: 2 });
+  assert.deepEqual(pick(services.points.getStats(guild.id, users[9])), { games: 3, wins: 1, losses: 2, points: 1 });
+  assert.equal(services.points.getRanking(guild.id)[0].points, 2);
+  assert.equal(services.points.getStats(guild2.id, users[0]).points, 0);
 });
 
-test('승점은 서버별로 따로 계산된다', () => {
-  const { services, guild, users, register, join } = setup();
-  const guild2 = services.guilds.ensureGuild('guild-2');
-  users.slice(0, 10).forEach((u) => {
-    register(u);
-    join(u);
-    register(u, guild2);
-  });
-  services.teams.shuffle({ guildId: guild.id, discordUserId: users[0] });
-  services.matches.start({ guildId: guild.id, discordUserId: users[0] });
-  services.matches.finish({ guildId: guild.id, discordUserId: users[0], winnerSide: 'BLUE' });
-
-  const total = users.slice(0, 10).reduce((s, u) => s + services.points.getStats(guild.id, u).points, 0);
-  assert.equal(total, 5);
-  for (const u of users.slice(0, 10)) assert.equal(services.points.getStats(guild2.id, u).points, 0);
+test('팀 기준 판 기록 (관리자 커맨드): 셔플 후 승리팀 5명', () => {
+  const { services, guild, users, fill } = setup();
+  fill(1);
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  services.matches.start(base);
+  assert.throws(() => services.matches.recordGameByTeam({ ...base, winnerSide: 'RED' }), isUserError(/팀 구성/));
+  const match = services.matches.getActiveMatch(guild.id);
+  services.matches.finish(base);
+  assert.equal(services.matches.getMatchView(match.id).games.length, 0);
 });
 
-test('계정 탈퇴 시 모집 중인 대전에서도 빠지고, 승점 기록은 남는다', () => {
-  const { services, guild, register, join } = setup();
-  register('u1');
-  const { match } = join('u1');
-  const { leftMatchId } = services.accounts.withdraw({ guildId: guild.id, discordUserId: 'u1' });
-  assert.equal(leftMatchId, match.id);
-  assert.equal(services.matches.getMatchView(match.id).participants.length, 0);
-  assert.equal(services.points.getStats(guild.id, 'u1').member.status, 'WITHDRAWN');
-});
-
-test('대전 취소 후 새 대전을 열 수 있다', () => {
-  const { services, guild, register, join } = setup();
+test('대전 취소 후 새 대전을 등록할 수 있다', () => {
+  const { services, guild, register, create, join } = setup();
   register('u1');
   register('u2');
-  join('u1');
+  create('u1');
   join('u2');
-  assert.throws(() => services.matches.cancel({ guildId: guild.id, discordUserId: 'u2' }), isUserError(/만든 사람/));
+  assert.throws(() => services.matches.cancel({ guildId: guild.id, discordUserId: 'u2' }), isUserError(/권한/));
   services.matches.cancel({ guildId: guild.id, discordUserId: 'u1' });
-  assert.equal(join('u2').created, true);
+  create('u2');
 });
 
-test('서버 참가/퇴장 상태 관리', () => {
-  const { db, services } = setup();
-  services.guilds.markLeft('guild-1');
-  assert.equal(db.prepare("SELECT status FROM guild WHERE discord_guild_id='guild-1'").get().status, 'LEFT');
-  assert.equal(services.guilds.ensureGuild('guild-1').status, 'ACTIVE');
+test('계정 탈퇴 시 모집 중인 대전에서도 빠진다', () => {
+  const { services, guild, register, create, join } = setup();
+  register('u1');
+  register('u2');
+  const match = create('u1');
+  join('u2');
+  assert.equal(services.accounts.withdraw({ guildId: guild.id, discordUserId: 'u2' }).leftMatchId, match.id);
+  assert.equal(services.matches.getMatchView(match.id).participants.length, 1);
+});
+
+test('셔플: 10명일 때 5:5, 팀 등록자 유지, 포지션 우선', () => {
+  const { services, guild, users, fill } = setup();
+  fill();
+  const positions = ['TOP', 'JUNGLE', 'MID', 'ADC', 'SUPPORT'];
+  users.slice(0, 10).forEach((u, i) =>
+    services.matches.setPosition({ guildId: guild.id, discordUserId: u, position: positions[i % 5] }),
+  );
+  services.teams.joinTeam({ guildId: guild.id, discordUserId: users[0], side: 'BLUE' });
+  for (let i = 0; i < 10; i += 1) {
+    const view = services.teams.shuffle({ guildId: guild.id, discordUserId: users[0] });
+    assert.equal(view.red.length, 5);
+    assert.ok(view.blue.some((p) => p.discord_user_id === users[0]));
+    for (const team of [view.red, view.blue]) assert.equal(new Set(team.map((p) => p.position)).size, 5);
+  }
+});
+
+test('DB 제약: 서버당 활성 대전 1개, 판 번호 중복 불가', () => {
+  const { db, guild } = setup();
+  const { lastInsertRowid } = db.prepare('INSERT INTO match (guild_id) VALUES (?)').run(guild.id);
+  assert.throws(() => db.prepare('INSERT INTO match (guild_id) VALUES (?)').run(guild.id), /UNIQUE/);
+  db.prepare('INSERT INTO match_record (match_id, game_no) VALUES (?, 1)').run(lastInsertRowid);
+  assert.throws(() => db.prepare('INSERT INTO match_record (match_id, game_no) VALUES (?, 1)').run(lastInsertRowid), /UNIQUE/);
 });

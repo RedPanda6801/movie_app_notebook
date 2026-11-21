@@ -67,6 +67,29 @@ function describeCommand(interaction) {
   return parts.join(' ');
 }
 
+/**
+ * 커맨드뿐 아니라 버튼/선택 메뉴/입력창도 로그용 문자열로 만든다.
+ *   [버튼] 대전 참가 · [선택] 포지션 선택: MID · [입력] 대전 참가 - 롤 아이디 입력: Hide on bush#KR1
+ * @param {(action: string) => string} labelFor customId의 action을 사람이 읽는 이름으로 바꾸는 함수
+ */
+function describeInteraction(interaction, labelFor = (a) => a) {
+  if (interaction.isChatInputCommand?.()) return describeCommand(interaction);
+  const action = String(interaction.customId ?? '').split('|')[0];
+  const label = labelFor(action) || action;
+  if (interaction.isButton?.()) return `[버튼] ${label}`;
+  if (interaction.isStringSelectMenu?.()) return `[선택] ${label}: ${(interaction.values ?? []).join(', ')}`;
+  if (interaction.isModalSubmit?.()) {
+    let detail = '';
+    try {
+      detail = interaction.fields.getTextInputValue('gameName');
+    } catch {
+      /* 롤 아이디 입력창이 아님 */
+    }
+    return `[입력] ${label}${detail ? `: ${detail}` : ''}`;
+  }
+  return label;
+}
+
 /** 등록자: 서버 표시 이름 (사용자명, 디스코드 ID) */
 function describeUser(interaction) {
   const { user } = interaction;
@@ -86,4 +109,4 @@ function describeReply(payload) {
   return texts.join(' / ');
 }
 
-module.exports = { createCommandLogger, describeCommand, describeUser, describeReply };
+module.exports = { createCommandLogger, describeCommand, describeInteraction, describeUser, describeReply };

@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
+const { migrate } = require('./migrations');
 
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
 
@@ -15,7 +16,7 @@ function openDatabase(filename) {
   const db = new Database(filename);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  db.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
+  migrate(db, fs.readFileSync(SCHEMA_PATH, 'utf8'));
   return db;
 }
 

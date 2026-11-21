@@ -6,7 +6,7 @@ const MEDALS = ['🥇', '🥈', '🥉'];
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('승점')
-    .setDescription('대전관리 - 개인별 승점 조회 (1승 = 1점)')
+    .setDescription('대전관리 - 개인별 승점 조회 (판 1승 = 1점, 관리자 전용)')
     .addSubcommand((s) =>
       s
         .setName('조회')

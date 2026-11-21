@@ -32,12 +32,12 @@ function formatMembers(members, { showLock = true } = {}) {
 
 /** 대전 현황 Embed */
 function matchEmbed(view, title) {
-  const { match, participants, red, blue, unassigned, record } = view;
+  const { match, participants, red, blue, unassigned, games = [] } = view;
   const embed = new EmbedBuilder()
     .setTitle(title || `대전 #${match.id}`)
-    .setColor(record ? COLORS[record.winner_side] : COLORS.NEUTRAL)
+    .setColor(COLORS.NEUTRAL)
     .setDescription(
-      `상태: **${MATCH_STATUS_LABELS[match.status]}** · 참가자 **${participants.length}/${MATCH_SIZE}**명`,
+      `상태: **${MATCH_STATUS_LABELS[match.status]}** · 참가자 **${participants.length}/${MATCH_SIZE}**명 · 기록 **${games.length}/${match.game_count}**판`,
     )
     .addFields(
       { name: `🔴 ${SIDE_LABELS.RED} (${red.length})`, value: formatMembers(red), inline: true },
@@ -46,8 +46,14 @@ function matchEmbed(view, title) {
   if (unassigned.length > 0) {
     embed.addFields({ name: `⚪ 팀 미배정 (${unassigned.length})`, value: formatMembers(unassigned) });
   }
-  if (record) {
-    embed.addFields({ name: '🏆 결과', value: `**${SIDE_LABELS[record.winner_side]} 승리**` });
+  if (games.length > 0) {
+    embed.addFields({
+      name: '🏆 판별 결과',
+      value: games
+        .map((g) => `**${g.game_no}판** ${g.winnerDiscordUserIds.map(mention).join(' ')}`)
+        .join('\n')
+        .slice(0, 1024),
+    });
   }
   embed.setFooter({ text: '📌 = 팀 직접 등록 (셔플 제외)' });
   return embed;
@@ -58,7 +64,8 @@ function participantsEmbed(view, title) {
   const { match, participants } = view;
   const lines = participants.map((p, i) => {
     const team = p.side ? `${p.side === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[p.side]}${p.is_team_locked ? ' 📌' : ''}` : '⚪ 팀 미배정';
-    return `**${i + 1}.** ${mention(p.discord_user_id)} · \`${positionLabel(p.position)}\` · ${team}`;
+    const gameName = p.game_name ? ` · 🎮 ${p.game_name}` : '';
+    return `**${i + 1}.** ${mention(p.discord_user_id)} · \`${positionLabel(p.position)}\` · ${team}${gameName}`;
   });
   return new EmbedBuilder()
     .setTitle(title || `대전 #${match.id} 참가자 (${participants.length}/${MATCH_SIZE})`)

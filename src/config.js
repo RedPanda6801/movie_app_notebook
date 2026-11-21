@@ -18,5 +18,6 @@ module.exports = {
   devGuildId: process.env.DISCORD_DEV_GUILD_ID || null,
   databasePath: process.env.DATABASE_PATH || 'data/bot.sqlite',
   logDir: process.env.LOG_DIR || 'logs',
+  recordsDir: process.env.RECORDS_DIR || 'data/records',
   logTimeZone: process.env.LOG_TIMEZONE || 'Asia/Seoul',
 };
