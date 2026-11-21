@@ -6,7 +6,7 @@ const { UserError } = require('../utils/errors');
  * 승점 = 승리 횟수 x 1점 (감점 없음). 서버(guild)별로 따로 계산한다.
  */
 function createPointService(repos, accountService) {
-  const { participants, guildMembers } = repos;
+  const { recordPlayers, guildMembers } = repos;
 
   function toStats(row) {
     return {
@@ -21,7 +21,7 @@ function createPointService(repos, accountService) {
   function getStats(guildId, discordUserId) {
     const member = accountService.findAnyMember(guildId, discordUserId);
     if (!member) throw new UserError('이 서버에 등록된 적이 없는 사용자입니다.');
-    return { member, ...toStats(participants.getStatsByMember(member.id)) };
+    return { member, ...toStats(recordPlayers.getSummaryByMember(member.id)) };
   }
 
   /** 서버 승점 랭킹 */

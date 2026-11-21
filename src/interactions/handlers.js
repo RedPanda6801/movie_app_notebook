@@ -4,6 +4,8 @@ const { positionLabel } = require('../utils/format');
 const { saveScreenshot, removeScreenshot } = require('../utils/screenshotStore');
 const { ACTIONS, buildId, parseId } = require('./ids');
 const views = require('./views');
+const statsViews = require('./statsViews');
+const { parseStatLines } = require('../services/statInput');
 const { postMatchMessage, refreshMatchMessage, postFinishMessage } = require('./matchMessage');
 
 /**
@@ -221,19 +223,36 @@ const handlers = {
   },
 
   async [ACTIONS.RECORD](interaction, ctx, [matchId]) {
-    const { match, gameNo, participants } = ctx.services.matches.checkCanRecord(base(interaction, ctx, matchId));
-    return interaction.showModal(views.recordModal(match.id, gameNo, participants));
+    const { match, gameNo, red, blue } = ctx.services.matches.checkCanRecord(base(interaction, ctx, matchId));
+    return interaction.showModal(views.recordModal(match.id, gameNo, red, blue));
   },
 
   async [ACTIONS.RECORD_MODAL](interaction, ctx, [matchId, gameNo]) {
     // 캡쳐 다운로드가 3초를 넘을 수 있어 먼저 응답을 예약한다.
     await interaction.deferReply();
     const params = base(interaction, ctx, matchId);
-    const { gameNo: expected } = ctx.services.matches.checkCanRecord(params);
+    const { gameNo: expected, red, blue } = ctx.services.matches.checkCanRecord(params);
     if (Number(gameNo) !== expected) {
       throw new UserError(`${gameNo}판은 이미 기록되었습니다. 다시 [대전 기록]을 눌러 주세요.`);
     }
-    const winnerDiscordUserIds = interaction.fields.getStringSelectValues('winners');
+    const winnerSide = interaction.fields.getStringSelectValues('winnerSide')[0];
+    const redText = interaction.fields.getTextInputValue('statsRED');
+    const blueText = interaction.fields.getTextInputValue('statsBLUE');
+    let stats;
+    try {
+      // 입력창 양식과 같은 순서(팀별 참가 순서)로 K/D/A/CS를 읽는다.
+      stats = [
+        ...parseStatLines(redText, red, SIDE_LABELS.RED),
+        ...parseStatLines(blueText, blue, SIDE_LABELS.BLUE),
+      ].map(({ member, ...st }) => ({ participantId: member.id, ...st }));
+    } catch (err) {
+      if (!(err instanceof UserError)) throw err;
+      // 입력창이 닫히면 내용이 사라지므로, 다시 붙여넣을 수 있게 입력한 내용을 돌려준다.
+      throw new UserError(
+        `${err.message}\n\n다시 [대전 기록]을 눌러 아래 내용을 붙여넣고 고쳐 주세요.\n` +
+          `**${SIDE_LABELS.RED}**\n\`\`\`\n${redText}\n\`\`\`\n**${SIDE_LABELS.BLUE}**\n\`\`\`\n${blueText}\n\`\`\``.slice(0, 1700),
+      );
+    }
     const attachment = interaction.fields.getUploadedFiles('screenshot', true).first();
 
     const screenshotPath = await saveScreenshot({
@@ -246,7 +265,7 @@ const handlers = {
     });
     let result;
     try {
-      result = ctx.services.matches.recordGame({ ...params, gameNo: expected, winnerDiscordUserIds, screenshotPath });
+      result = ctx.services.matches.recordGame({ ...params, gameNo: expected, winnerSide, stats, screenshotPath });
     } catch (err) {
       await removeScreenshot(screenshotPath);
       throw err;
@@ -282,6 +301,43 @@ const handlers = {
     const view = ctx.services.matches.cancel(base(interaction, ctx, matchId));
     await interaction.update(views.controlPanel(view, `🛑 대전 #${view.match.id}을(를) 취소했습니다.`));
     await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
+  },
+
+  /* ───────────── /전적 관리 패널 ───────────── */
+
+  async [ACTIONS.STATS_BY_MATCH](interaction, ctx) {
+    return interaction.reply(statsViews.matchListSelect(ctx.services.records.listMatches(ctx.guild.id)));
+  },
+
+  async [ACTIONS.STATS_MATCH_SELECT](interaction, ctx) {
+    const data = ctx.services.records.getMatchRecords(ctx.guild.id, interaction.values[0]);
+    // 대전 목록 메시지는 그대로 두고, 결과는 새 메시지(본인만)로 보여준다.
+    return interaction.reply(statsViews.matchStatsMessage(data, null));
+  },
+
+  async [ACTIONS.STATS_GAME_SELECT](interaction, ctx, [matchId]) {
+    const value = interaction.values[0];
+    const data = ctx.services.records.getMatchRecords(ctx.guild.id, matchId);
+    // 캡쳐 이미지 첨부가 있을 수 있어 먼저 예약한다.
+    await interaction.deferUpdate();
+    return interaction.editReply({
+      ...statsViews.matchStatsMessage(data, value === 'SUMMARY' ? null : Number(value)),
+      attachments: [],
+    });
+  },
+
+  async [ACTIONS.STATS_BY_MEMBER](interaction) {
+    return interaction.reply(statsViews.memberSelect());
+  },
+
+  async [ACTIONS.STATS_MEMBER_SELECT](interaction, ctx) {
+    const data = ctx.services.records.getMemberRecords(ctx.guild.id, interaction.values[0]);
+    return interaction.reply(statsViews.memberStatsMessage(data));
+  },
+
+  async [ACTIONS.STATS_ALL](interaction, ctx) {
+    await interaction.deferReply(); // CSV 파일 첨부
+    return interaction.editReply(statsViews.guildStatsMessage(ctx.services.records.getGuildRecords(ctx.guild.id)));
   },
 };
 

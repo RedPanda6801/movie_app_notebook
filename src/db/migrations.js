@@ -46,6 +46,38 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // v2 -> v3: 판별 승리자(match_record_winner) -> 판별 참가자 전적(match_record_player)
+    //           팀 · K/D/A · CS · 승패를 참가자별로 저장한다.
+    version: 3,
+    up(db) {
+      db.exec(`
+        CREATE TABLE match_record_player (
+            record_id       INTEGER NOT NULL REFERENCES match_record (id) ON DELETE CASCADE,
+            guild_member_id INTEGER NOT NULL REFERENCES guild_member (id),
+            side            TEXT    CHECK (side IN ('RED', 'BLUE')),
+            game_name       TEXT,
+            position        TEXT    CHECK (position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')),
+            kills           INTEGER CHECK (kills >= 0),
+            deaths          INTEGER CHECK (deaths >= 0),
+            assists         INTEGER CHECK (assists >= 0),
+            cs              INTEGER CHECK (cs >= 0),
+            is_win          INTEGER NOT NULL CHECK (is_win IN (0, 1)),
+            PRIMARY KEY (record_id, guild_member_id)
+        );
+        -- 기존 기록: 그 대전의 참가자 전원을 옮기고, 승리자 목록으로 승패를 채운다. (K/D/A/CS는 기록이 없어 NULL)
+        INSERT INTO match_record_player (record_id, guild_member_id, side, game_name, position, is_win)
+             SELECT r.id, mp.guild_member_id, t.side, mp.game_name, mp.position,
+                    EXISTS (SELECT 1 FROM match_record_winner w
+                             WHERE w.record_id = r.id AND w.guild_member_id = mp.guild_member_id)
+               FROM match_record r
+               JOIN match_participant mp ON mp.match_id = r.match_id
+               LEFT JOIN team t ON t.id = mp.team_id;
+        DROP TABLE match_record_winner;
+        CREATE INDEX IF NOT EXISTS ix_record_player_member ON match_record_player (guild_member_id);
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));

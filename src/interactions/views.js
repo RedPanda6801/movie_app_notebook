@@ -27,6 +27,8 @@ const {
 } = require('../constants');
 const { COLORS, mention, positionLabel } = require('../utils/format');
 const { ACTIONS, buildId } = require('./ids');
+const { buildStatTemplate } = require('../services/statInput');
+const { aggregateByMember } = require('../services/recordService');
 
 const STATUS_COLORS = {
   RECRUITING: COLORS.BLUE,
@@ -310,8 +312,18 @@ function controlPanel(view, notice = null, embeds = []) {
   return { content: lines.join('\n'), embeds, components: isActive ? [row] : [] };
 }
 
-/** 판 기록 입력창: 결과 캡쳐 + 이긴 사람 5명 */
-function recordModal(matchId, gameNo, participants) {
+/**
+ * 판 기록 입력창: 결과 캡쳐 + 승리팀 + 팀별 K/D/A/CS
+ * 팀별 입력칸에는 팀원 이름이 미리 채워진 양식이 들어가며, 숫자만 바꾸면 된다.
+ */
+function recordModal(matchId, gameNo, red, blue) {
+  const statInput = (customId, members) =>
+    new TextInputBuilder()
+      .setCustomId(customId)
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true)
+      .setMaxLength(1000)
+      .setValue(buildStatTemplate(members));
   return new ModalBuilder()
     .setCustomId(buildId(ACTIONS.RECORD_MODAL, matchId, gameNo))
     .setTitle(`${gameNo}판 결과 기록`)
@@ -323,38 +335,59 @@ function recordModal(matchId, gameNo, participants) {
           new FileUploadBuilder().setCustomId('screenshot').setMinValues(1).setMaxValues(1).setRequired(true),
         ),
       new LabelBuilder()
-        .setLabel(`이긴 사람 ${TEAM_SIZE}명`)
-        .setDescription(`이번 판에서 이긴 팀 ${TEAM_SIZE}명을 골라 주세요. (1명당 승점 1점)`)
+        .setLabel('승리팀')
+        .setDescription(`이긴 팀 ${TEAM_SIZE}명에게 승점 1점씩`)
         .setStringSelectMenuComponent(
           new StringSelectMenuBuilder()
-            .setCustomId('winners')
-            .setMinValues(TEAM_SIZE)
-            .setMaxValues(TEAM_SIZE)
-            .setPlaceholder(`승리자 ${TEAM_SIZE}명 선택`)
-            .addOptions(
-              participants.map((p) => ({
-                label: (p.display_name || p.discord_user_id).slice(0, 100),
-                description: (p.game_name || '롤 아이디 미입력').slice(0, 100),
-                value: p.discord_user_id,
-              })),
-            ),
+            .setCustomId('winnerSide')
+            .setMinValues(1)
+            .setMaxValues(1)
+            .setPlaceholder('승리팀 선택')
+            .addOptions([
+              { label: `🔴 ${SIDE_LABELS.RED} 승리`, value: 'RED' },
+              { label: `🔵 ${SIDE_LABELS.BLUE} 승리`, value: 'BLUE' },
+            ]),
         ),
+      new LabelBuilder()
+        .setLabel(`🔴 ${SIDE_LABELS.RED} 킬/데스/어시/CS`)
+        .setDescription('줄마다 숫자만 바꿔 주세요. 예) 1. 홍길동 : 5/2/10/180')
+        .setTextInputComponent(statInput('statsRED', red)),
+      new LabelBuilder()
+        .setLabel(`🔵 ${SIDE_LABELS.BLUE} 킬/데스/어시/CS`)
+        .setDescription('줄마다 숫자만 바꿔 주세요. 예) 1. 김철수 : 3/4/7/150')
+        .setTextInputComponent(statInput('statsBLUE', blue)),
     );
+}
+
+/** 전적 한 줄: K/D/A · CS (입력 안 된 이전 기록은 -) */
+function statText(p) {
+  if (p.kills == null) return 'K/D/A -';
+  return `${p.kills}/${p.deaths}/${p.assists} · CS ${p.cs}`;
 }
 
 /* ───────────── 대전 종료 알림 (모두에게 보임) ───────────── */
 
 function finishMessage(view) {
-  const { match, participants, games } = view;
-  const wins = new Map(participants.map((p) => [p.discord_user_id, 0]));
-  for (const g of games) for (const id of g.winnerDiscordUserIds) wins.set(id, (wins.get(id) || 0) + 1);
+  const { match, games } = view;
+  const rows = games.flatMap((g) => g.players);
+  const members = aggregateByMember(rows).sort(
+    (a, b) => b.summary.wins - a.summary.wins || b.summary.kills - a.summary.kills,
+  );
 
   const gameLines = games.length
-    ? games.map((g) => `**${g.game_no}판** 🏆 ${g.winnerDiscordUserIds.map(mention).join(' ')}`).join('\n')
+    ? games
+        .map((g) => {
+          const team = g.winnerSide ? `${g.winnerSide === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[g.winnerSide]} 승리` : '승리';
+          return `**${g.game_no}판** 🏆 ${team} · ${g.winnerDiscordUserIds.map(mention).join(' ')}`;
+        })
+        .join('\n')
     : '기록된 판이 없습니다.';
-  const pointLines = [...wins.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([id, n]) => `${mention(id)} **${n}점**`)
+  const memberLines = members
+    .map((m) => {
+      const s = m.summary;
+      const kda = s.statGames ? ` · ${s.kills}/${s.deaths}/${s.assists} (KDA ${s.kda.toFixed(2)}) · CS ${s.cs}` : '';
+      return `${mention(m.discord_user_id)} **${s.points}점** (${s.wins}승 ${s.losses}패)${kda}`;
+    })
     .join('\n');
 
   const embed = new EmbedBuilder()
@@ -363,8 +396,9 @@ function finishMessage(view) {
     .setDescription(`총 ${match.game_count}판 중 **${games.length}판** 기록 · 판 1승당 승점 1점`)
     .addFields(
       { name: '판별 결과', value: gameLines.slice(0, 1024) },
-      { name: '이번 대전 승점', value: (pointLines || '-').slice(0, 1024) },
-    );
+      { name: '이번 대전 전적 (승점 · 승패 · K/D/A · CS)', value: (memberLines || '-').slice(0, 1024) },
+    )
+    .setFooter({ text: '자세한 전적은 전적관리 채널의 [대전별 전적 조회]에서 볼 수 있습니다.' });
 
   const files = games
     .filter((g) => g.screenshot_path && fs.existsSync(g.screenshot_path))
@@ -392,4 +426,5 @@ module.exports = {
   controlPanel,
   recordModal,
   finishMessage,
+  statText,
 };

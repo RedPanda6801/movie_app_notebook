@@ -5,7 +5,7 @@ const { createMatchRepository } = require('./matchRepository');
 const { createTeamRepository } = require('./teamRepository');
 const { createMatchParticipantRepository } = require('./matchParticipantRepository');
 const { createMatchRecordRepository } = require('./matchRecordRepository');
-const { createMatchRecordWinnerRepository } = require('./matchRecordWinnerRepository');
+const { createMatchRecordPlayerRepository } = require('./matchRecordPlayerRepository');
 
 /**
  * 테이블별 Repository 묶음. 서비스는 DB를 직접 다루지 않고 이 객체만 사용한다.
@@ -21,7 +21,7 @@ function createRepositories(db) {
     teams: createTeamRepository(db),
     participants: createMatchParticipantRepository(db),
     records: createMatchRecordRepository(db),
-    recordWinners: createMatchRecordWinnerRepository(db),
+    recordPlayers: createMatchRecordPlayerRepository(db),
   };
 }
 

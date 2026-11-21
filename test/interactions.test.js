@@ -80,6 +80,7 @@ function createHarness() {
       isChatInputCommand: () => kind === 'command',
       isButton: () => kind === 'button',
       isStringSelectMenu: () => kind === 'select',
+      isUserSelectMenu: () => kind === 'userSelect',
       isModalSubmit: () => kind === 'modal',
       options: { getSubcommand: () => sub, getString: () => null, getUser: () => null, data: [{ name: sub, options: [] }] },
       fields: {
@@ -230,15 +231,38 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.equal(calls[0].type, 'update');
   assert.match(textOf(calls[0].payload), /대전을 시작했습니다/);
 
-  // 대전 기록: 버튼 → 캡쳐 + 승리자 5명 입력창
+  // 대전 기록: 버튼 → 캡쳐 + 승리팀 + 팀별 K/D/A/CS 입력창 (팀원 이름이 미리 채워진 양식)
   calls = await send({ kind: 'button', user: 'u1', customId: 'control.record|1' });
   assert.equal(calls[0].type, 'showModal');
+  const modal = calls[0].payload.toJSON();
+  assert.equal(modal.components.length, 4);
+  const redTemplate = modal.components[2].component.value;
+  const blueTemplate = modal.components[3].component.value;
+  assert.equal(redTemplate.split('\n').length, 5);
+  assert.match(redTemplate, /^1\. .+ \(lol.+#KR1\) : 0\/0\/0\/0$/m);
+  const fillIn = (template, k) => template.replace(/0\/0\/0\/0/g, () => `${k}/1/2/150`);
+
+  // 숫자를 덜 채우면 본인에게 안내 + 입력한 내용을 돌려준다
   const attachment = { url: 'https://cdn.example/r.png', name: 'r.png', contentType: 'image/png', size: 3 };
   calls = await send({
     kind: 'modal',
     user: 'u1',
     customId: 'control.recordModal|1|1',
-    fields: { winners: users.slice(0, 5), screenshot: attachment },
+    fields: {
+      winnerSide: ['RED'],
+      statsRED: redTemplate.split('\n').slice(0, 4).join('\n'),
+      statsBLUE: blueTemplate,
+      screenshot: attachment,
+    },
+  });
+  assert.match(textOf(calls.at(-1).payload), /1팀 5번의 K\/D\/A\/CS가 입력되지 않았습니다/);
+  assert.match(textOf(calls.at(-1).payload), /붙여넣고 고쳐 주세요/);
+
+  calls = await send({
+    kind: 'modal',
+    user: 'u1',
+    customId: 'control.recordModal|1|1',
+    fields: { winnerSide: ['RED'], statsRED: fillIn(redTemplate, 7), statsBLUE: fillIn(blueTemplate, 3), screenshot: attachment },
   });
   assert.equal(calls[0].type, 'deferReply');
   assert.ok(isEphemeral(calls[0].payload));
@@ -251,11 +275,11 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
     kind: 'modal',
     user: 'u1',
     customId: 'control.recordModal|1|2',
-    fields: { winners: users.slice(5), screenshot: { ...attachment, contentType: 'text/plain' } },
+    fields: { winnerSide: ['BLUE'], statsRED: fillIn(redTemplate, 1), statsBLUE: fillIn(blueTemplate, 1), screenshot: { ...attachment, contentType: 'text/plain' } },
   });
   assert.match(textOf(calls.at(-1).payload), /이미지 파일/);
 
-  // 대전 종료 → 모두에게 보이는 종료 알림 (캡쳐 첨부)
+  // 대전 종료 → 모두에게 보이는 종료 알림 (캡쳐 첨부, K/D/A 포함)
   calls = await send({ kind: 'button', user: 'u1', customId: 'control.finish|1' });
   assert.equal(calls[0].type, 'deferUpdate', '종료 알림 게시 전에 먼저 응답을 예약한다 (3초 제한)');
   assert.equal(calls[1].type, 'editReply');
@@ -263,12 +287,66 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   const finish = discord.sent[1].payload;
   assert.match(finish.content, /대전 #1이\(가\) 종료되었습니다/);
   assert.equal(finish.files.length, 1);
-  assert.match(JSON.stringify(finish.embeds[0].toJSON()), /2판 중 \*\*1판\*\* 기록/);
+  const finishText = JSON.stringify(finish.embeds[0].toJSON());
+  assert.match(finishText, /2판 중 \*\*1판\*\* 기록/);
+  assert.match(finishText, /1팀 승리/);
+  assert.match(finishText, /7\/1\/2/);
   assert.equal(matchMessage.payload.components.length, 0, '종료 후 공개 메시지 버튼은 사라진다');
 
   // 승점 반영 (판 1승 = 1점)
-  assert.equal(services.points.getStats(1, 'u1').points, 1);
-  assert.equal(services.points.getStats(1, 'u6').points, 0);
+  const finalView = services.matches.getMatchView(1);
+  const redUser = finalView.red[0].discord_user_id;
+  const blueUser = finalView.blue[0].discord_user_id;
+  assert.equal(services.points.getStats(1, redUser).points, 1);
+  assert.equal(services.points.getStats(1, blueUser).points, 0);
+
+  // ───── 전적관리 ─────
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '전적', sub: '관리' });
+  assert.ok(!isEphemeral(calls[0].payload), '전적 패널은 모두에게 보여야 한다');
+  assert.deepEqual(
+    calls[0].payload.components[0].toJSON().components.map((c) => c.label),
+    ['대전별 전적 조회', '개인별 전적 조회', '전체 전적 조회'],
+  );
+
+  // 대전별 전적: 대전 선택 → 참가자별 합계 → 판 선택(캡쳐 포함)
+  calls = await send({ kind: 'button', user: 'u7', customId: 'stats.byMatch' });
+  assert.ok(isEphemeral(calls[0].payload));
+  assert.match(calls[0].payload.components[0].toJSON().components[0].options[0].label, /대전 #1/);
+  calls = await send({ kind: 'select', user: 'u7', customId: 'stats.matchSelect', values: ['1'] });
+  assert.ok(isEphemeral(calls[0].payload));
+  const matchStats = JSON.stringify(calls[0].payload.embeds[0].toJSON());
+  assert.match(matchStats, /참가자별 전적/);
+  assert.match(matchStats, /1승 0패 \(100%\)/);
+  assert.match(matchStats, /합계 7\/1\/2 · CS 150/);
+  calls = await send({ kind: 'select', user: 'u7', customId: 'stats.gameSelect|1', values: ['1'] });
+  assert.equal(calls[0].type, 'deferUpdate');
+  const gameStats = calls[1].payload;
+  assert.match(JSON.stringify(gameStats.embeds[0].toJSON()), /1팀.*🏆 승/);
+  assert.equal(gameStats.files.length, 1, '판 결과 캡쳐 첨부');
+
+  // 개인별 전적: 계정 선택
+  calls = await send({ kind: 'button', user: 'u7', customId: 'stats.byMember' });
+  assert.ok(isEphemeral(calls[0].payload));
+  calls = await send({ kind: 'userSelect', user: 'u7', customId: 'stats.memberSelect', values: [redUser] });
+  const memberStats = JSON.stringify(calls[0].payload.embeds[0].toJSON());
+  assert.match(memberStats, /1판 1승 0패/);
+  assert.match(memberStats, /승점 \*\*1점\*\*/);
+  assert.match(memberStats, /대전 #1 1판 · 🔴 1팀 · \*\*승\*\*/);
+  calls = await send({ kind: 'userSelect', user: 'u7', customId: 'stats.memberSelect', values: ['stranger'] });
+  assert.match(textOf(calls[0].payload), /등록된 적이 없는 계정/);
+
+  // 전체 전적: 요약 + 판별 CSV
+  calls = await send({ kind: 'button', user: 'u7', customId: 'stats.all' });
+  assert.equal(calls[0].type, 'deferReply');
+  assert.ok(isEphemeral(calls[0].payload));
+  const all = calls[1].payload;
+  assert.match(JSON.stringify(all.embeds[0].toJSON()), /판별 기록 10건/);
+  const csv = all.files[0].attachment.toString('utf8');
+  const csvLines = csv.trim().split('\r\n');
+  assert.equal(csvLines.length, 11, '헤더 + 10명');
+  assert.match(csvLines[0], /대전,판,기록일시,디스코드ID,이름,롤아이디,팀,포지션,킬,데스,어시,CS,승패/);
+  assert.match(csv, /,7,1,2,150,승/);
+  assert.match(csv, /,3,1,2,150,패/);
 
   // 끝난 대전의 옛 버튼
   calls = await send({ kind: 'button', user: 'u2', customId: 'match.join|1' });

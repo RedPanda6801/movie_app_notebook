@@ -52,6 +52,10 @@ test('기존(v1) DB를 최신 스키마로 올리고 기존 승점을 유지한�
   assert.equal(services.points.getStats(1, 'loser').points, 0);
   assert.equal(db.prepare('SELECT game_no FROM match_record').get().game_no, 1);
   assert.equal(db.prepare('SELECT game_count FROM match WHERE id = 1').get().game_count, 1);
+  // v3: 판별 참가자 전적으로 옮겨진다 (K/D/A/CS는 이전 기록이라 비어 있음)
+  const players = db.prepare('SELECT * FROM match_record_player ORDER BY guild_member_id').all();
+  assert.deepEqual(players.map((p) => [p.guild_member_id, p.side, p.is_win, p.kills]), [[1, 'RED', 1, null], [2, 'BLUE', 0, null]]);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'match_record_winner'").get().n, 0);
   db.close();
 
   // 다시 열어도 마이그레이션이 중복 적용되지 않는다

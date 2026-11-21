@@ -34,15 +34,6 @@ function createMatchParticipantRepository(db) {
     resetShuffledByMatch: db.prepare(
       'UPDATE match_participant SET team_id = NULL WHERE match_id = ? AND is_team_locked = 0',
     ),
-    // 회원 1명의 전적 (종료된 대전의 판 기준) - 승점 조회용
-    getStatsByMember: db.prepare(`
-      SELECT COUNT(r.id) AS games,
-             COUNT(w.record_id) AS wins
-        FROM match_participant mp
-        JOIN match m ON m.id = mp.match_id AND m.status = 'FINISHED'
-        JOIN match_record r ON r.match_id = m.id
-        LEFT JOIN match_record_winner w ON w.record_id = r.id AND w.guild_member_id = mp.guild_member_id
-       WHERE mp.guild_member_id = ?`),
   };
 
   return {
@@ -63,7 +54,6 @@ function createMatchParticipantRepository(db) {
     assignTeam: (id, teamId) => stmts.assignTeam.run(teamId, id),
     /** 셔플로 배정된 팀(직접 등록자 제외)을 초기화한다. */
     resetShuffledByMatch: (matchId) => stmts.resetShuffledByMatch.run(matchId),
-    getStatsByMember: (guildMemberId) => stmts.getStatsByMember.get(guildMemberId),
   };
 }
 

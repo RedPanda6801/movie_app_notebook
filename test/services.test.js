@@ -91,17 +91,30 @@ test('권한: 대전 시작/기록/종료는 관리자 또는 등록자만', () 
   services.matches.checkManager({ guildId: guild.id, discordUserId: 'admin', isAdmin: true });
 });
 
-test('대전 시작: 10명이 모여야 가능 (팀 구성은 필요 없음)', () => {
+/** 셔플로 5:5를 만들고 시작한다. */
+function startWithTeams({ services, guild, users }) {
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  services.teams.shuffle(base);
+  services.matches.start(base);
+  return base;
+}
+
+/** 참가자 전원 K/D/A/CS (참가 id 기반으로 서로 다른 값) */
+function statsFor(list, f = (p) => ({ kills: p.id % 7, deaths: p.id % 3, assists: p.id % 5, cs: 100 + p.id })) {
+  return list.map((p) => ({ participantId: p.id, ...f(p) }));
+}
+
+test('대전 시작: 10명 + 1팀 5명 · 2팀 5명이어야 가능', () => {
   const { services, guild, users, register, create, join } = setup();
   users.slice(0, 10).forEach((u) => register(u));
   create(users[0]);
   users.slice(1, 9).forEach((u) => join(u));
-  assert.throws(
-    () => services.matches.start({ guildId: guild.id, discordUserId: users[0] }),
-    isUserError(/10명이어야/),
-  );
+  const start = () => services.matches.start({ guildId: guild.id, discordUserId: users[0] });
+  assert.throws(start, isUserError(/10명이어야/));
   join(users[9]);
-  const view = services.matches.start({ guildId: guild.id, discordUserId: users[0] });
+  assert.throws(start, isUserError(/팀 구성이 끝나야/));
+  services.teams.shuffle({ guildId: guild.id, discordUserId: users[0] });
+  const view = start();
   assert.equal(view.match.status, 'IN_PROGRESS');
   assert.throws(() => services.matches.leave({ guildId: guild.id, discordUserId: users[1] }), isUserError(/이미 시작/));
   assert.throws(
@@ -110,69 +123,118 @@ test('대전 시작: 10명이 모여야 가능 (팀 구성은 필요 없음)', (
   );
 });
 
-test('판 기록: 승리자 5명, 판 수만큼만, 판 번호 순서', () => {
-  const { services, guild, users, fill } = setup();
-  fill(2);
-  const base = { guildId: guild.id, discordUserId: users[0] };
-  assert.throws(() => services.matches.checkCanRecord(base), isUserError(/대전 시작/));
-  services.matches.start(base);
+test('판 기록: 승리팀 + 10명 K/D/A/CS 필수, 판 수만큼만, 팀/승패 저장', () => {
+  const ctx = setup();
+  const { services, guild, users, fill } = ctx;
+  const match = fill(2);
+  const base0 = { guildId: guild.id, discordUserId: users[0] };
+  assert.throws(() => services.matches.checkCanRecord(base0), isUserError(/대전 시작/));
+  const base = startWithTeams(ctx);
 
-  assert.equal(services.matches.checkCanRecord(base).gameNo, 1);
+  const { gameNo, red, blue } = services.matches.checkCanRecord(base);
+  assert.equal(gameNo, 1);
+  assert.equal(red.length, 5);
+  assert.equal(blue.length, 5);
+  const all = [...red, ...blue];
+
   assert.throws(
-    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 4) }),
-    isUserError(/정확히 5명/),
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'PURPLE', stats: statsFor(all) }),
+    isUserError(/승리팀/),
   );
   assert.throws(
-    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: [...users.slice(0, 4), 'outsider'] }),
-    isUserError(/참가자만/),
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsFor(all.slice(1)) }),
+    isUserError(/10명의 킬\/데스\/어시\/CS/),
   );
-  services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 5), screenshotPath: 'a.png' });
   assert.throws(
-    () => services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(5, 10) }),
+    () =>
+      services.matches.recordGame({
+        ...base,
+        gameNo: 1,
+        winnerSide: 'RED',
+        stats: statsFor(all, () => ({ kills: -1, deaths: 0, assists: 0, cs: 0 })),
+      }),
+    isUserError(/모두 입력/),
+  );
+  services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsFor(all), screenshotPath: 'a.png' });
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'BLUE', stats: statsFor(all) }),
     isUserError(/이미 기록/),
   );
-  services.matches.recordGame({ ...base, gameNo: 2, winnerDiscordUserIds: users.slice(0, 5) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'BLUE', stats: statsFor(all) });
   assert.throws(() => services.matches.checkCanRecord(base), isUserError(/모두 기록/));
 
-  const { games } = services.matches.getMatchView(services.matches.getActiveMatch(guild.id).id);
-  assert.deepEqual(games.map((g) => g.game_no), [1, 2]);
+  const { games } = services.matches.getMatchView(match.id);
+  assert.deepEqual(games.map((g) => [g.game_no, g.winnerSide]), [[1, 'RED'], [2, 'BLUE']]);
   assert.equal(games[0].screenshot_path, 'a.png');
-  assert.deepEqual([...games[0].winnerDiscordUserIds].sort(), users.slice(0, 5).sort());
+  assert.equal(games[0].players.length, 10);
+  const p = games[0].players.find((x) => x.guild_member_id === red[0].guild_member_id);
+  assert.deepEqual(
+    { side: p.side, win: p.is_win, k: p.kills, d: p.deaths, a: p.assists, cs: p.cs, name: p.game_name },
+    {
+      side: 'RED',
+      win: 1,
+      k: red[0].id % 7,
+      d: red[0].id % 3,
+      a: red[0].id % 5,
+      cs: 100 + red[0].id,
+      name: red[0].game_name,
+    },
+  );
+  assert.deepEqual([...games[0].winnerDiscordUserIds].sort(), red.map((x) => x.discord_user_id).sort());
 });
 
-test('승점: 판 1승당 1점, 종료된 대전만 반영, 서버별 계산', () => {
-  const { services, guild, users, fill } = setup();
+test('승점/전적: 판 1승당 1점, 종료된 대전만 반영, 서버별 계산', () => {
+  const ctx = setup();
+  const { services, guild, users, fill } = ctx;
   const guild2 = services.guilds.ensureGuild('guild-2');
-  fill(3);
+  const match = fill(3);
   users.slice(0, 10).forEach((u) => services.accounts.register({ guildId: guild2.id, discordUserId: u }));
-  const base = { guildId: guild.id, discordUserId: users[0] };
-  services.matches.start(base);
-  services.matches.recordGame({ ...base, gameNo: 1, winnerDiscordUserIds: users.slice(0, 5) });
-  services.matches.recordGame({ ...base, gameNo: 2, winnerDiscordUserIds: users.slice(0, 5) });
-  services.matches.recordGame({ ...base, gameNo: 3, winnerDiscordUserIds: users.slice(5, 10) });
+  const base = startWithTeams(ctx);
+  const { red, blue } = services.matches.checkCanRecord(base);
+  const all = [...red, ...blue];
+  const fixed = () => ({ kills: 2, deaths: 1, assists: 3, cs: 100 });
+  services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsFor(all, fixed) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'RED', stats: statsFor(all, fixed) });
+  services.matches.recordGame({ ...base, gameNo: 3, winnerSide: 'BLUE', stats: statsFor(all, fixed) });
 
+  const redUser = red[0].discord_user_id;
+  const blueUser = blue[0].discord_user_id;
   // 종료 전에는 반영되지 않는다
-  assert.equal(services.points.getStats(guild.id, users[0]).points, 0);
-  const view = services.matches.finish(base);
-  assert.equal(view.match.status, 'FINISHED');
-  assert.equal(services.matches.getActiveMatch(guild.id), null);
+  assert.equal(services.points.getStats(guild.id, redUser).points, 0);
+  assert.equal(services.records.getMemberRecords(guild.id, redUser).summary.games, 0);
+  // 대전별 전적은 진행 중에도 볼 수 있다
+  assert.equal(services.records.getMatchRecords(guild.id, match.id).games.length, 3);
 
-  const pick = ({ games, wins, losses, points }) => ({ games, wins, losses, points });
-  assert.deepEqual(pick(services.points.getStats(guild.id, users[0])), { games: 3, wins: 2, losses: 1, points: 2 });
-  assert.deepEqual(pick(services.points.getStats(guild.id, users[9])), { games: 3, wins: 1, losses: 2, points: 1 });
-  assert.equal(services.points.getRanking(guild.id)[0].points, 2);
-  assert.equal(services.points.getStats(guild2.id, users[0]).points, 0);
-});
-
-test('팀 기준 판 기록 (관리자 커맨드): 셔플 후 승리팀 5명', () => {
-  const { services, guild, users, fill } = setup();
-  fill(1);
-  const base = { guildId: guild.id, discordUserId: users[0] };
-  services.matches.start(base);
-  assert.throws(() => services.matches.recordGameByTeam({ ...base, winnerSide: 'RED' }), isUserError(/팀 구성/));
-  const match = services.matches.getActiveMatch(guild.id);
   services.matches.finish(base);
-  assert.equal(services.matches.getMatchView(match.id).games.length, 0);
+  const pick = ({ games, wins, losses, points }) => ({ games, wins, losses, points });
+  assert.deepEqual(pick(services.points.getStats(guild.id, redUser)), { games: 3, wins: 2, losses: 1, points: 2 });
+  assert.deepEqual(pick(services.points.getStats(guild.id, blueUser)), { games: 3, wins: 1, losses: 2, points: 1 });
+  assert.equal(services.points.getRanking(guild.id)[0].points, 2);
+  assert.equal(services.points.getStats(guild2.id, redUser).points, 0);
+
+  // 개인별 전적: K/D/A/CS 합계와 평균, KDA
+  const me = services.records.getMemberRecords(guild.id, redUser);
+  assert.deepEqual(
+    { k: me.summary.kills, d: me.summary.deaths, a: me.summary.assists, cs: me.summary.cs, kda: me.summary.kda },
+    { k: 6, d: 3, a: 9, cs: 300, kda: 5 },
+  );
+  assert.equal(me.summary.avgCs, 100);
+  assert.equal(me.recent.length, 3);
+  assert.equal(me.recent[0].game_no, 3, '최근 판이 먼저');
+  assert.throws(() => services.records.getMemberRecords(guild.id, 'nobody'), isUserError(/등록된 적이 없는/));
+
+  // 대전별 전적: 참가자별 합계
+  const byMatch = services.records.getMatchRecords(guild.id, match.id);
+  assert.equal(byMatch.members.length, 10);
+  assert.equal(byMatch.members.find((m) => m.discord_user_id === redUser).summary.wins, 2);
+  assert.throws(() => services.records.getMatchRecords(guild2.id, match.id), isUserError(/찾을 수 없습니다/), '다른 서버 대전');
+
+  // 전체 전적: 계정별 요약 + 판별 30행
+  const all3 = services.records.getGuildRecords(guild.id);
+  assert.equal(all3.members.length, 10);
+  assert.equal(all3.rows.length, 30);
+  assert.equal(services.records.listMatches(guild.id)[0].record_count, 3);
+  assert.equal(services.records.getGuildRecords(guild2.id).rows.length, 0);
 });
 
 test('대전 취소 후 새 대전을 등록할 수 있다', () => {

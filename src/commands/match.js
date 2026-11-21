@@ -1,10 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { MATCH_SIZE, POSITIONS, POSITION_LABELS, SIDE_LABELS } = require('../constants');
+const { MATCH_SIZE, POSITIONS, POSITION_LABELS } = require('../constants');
 const { matchEmbed, participantsEmbed, positionLabel } = require('../utils/format');
 const views = require('../interactions/views');
 const { refreshMatchMessage, postFinishMessage } = require('../interactions/matchMessage');
 
-const sideChoices = Object.entries(SIDE_LABELS).map(([value, name]) => ({ name, value }));
 const positionChoices = [
   ...POSITIONS.map((value) => ({ name: POSITION_LABELS[value], value })),
   { name: '미정', value: 'NONE' },
@@ -39,14 +38,6 @@ module.exports = {
     .addSubcommand((s) => s.setName('참가자').setDescription('이번 대전에 참가한 사람 목록을 봅니다.'))
     .addSubcommand((s) => s.setName('현황').setDescription('현재 대전 현황(팀 구성, 기록)을 봅니다.'))
     .addSubcommand((s) => s.setName('시작').setDescription('10명이 모인 대전을 시작합니다.'))
-    .addSubcommand((s) =>
-      s
-        .setName('결과')
-        .setDescription('팀 기준으로 다음 판 결과를 기록합니다. (팀 구성이 끝난 경우, 승리팀 5명 승점 +1)')
-        .addStringOption((o) =>
-          o.setName('승리팀').setDescription('이긴 팀').setRequired(true).addChoices(...sideChoices),
-        ),
-    )
     .addSubcommand((s) => s.setName('종료').setDescription('진행 중인 대전을 종료하고 결과를 채널에 공개합니다.'))
     .addSubcommand((s) => s.setName('취소').setDescription('진행 중인 대전을 취소합니다.')),
 
@@ -102,13 +93,6 @@ module.exports = {
         const view = matches.start(base);
         await interaction.reply('▶️ 대전을 시작했습니다.');
         return refresh(view.match.id);
-      }
-
-      case '결과': {
-        const winnerSide = interaction.options.getString('승리팀', true);
-        const { match, gameNo } = matches.recordGameByTeam({ ...base, winnerSide });
-        await interaction.reply(`📸 ${gameNo}판: **${SIDE_LABELS[winnerSide]}** 승리로 기록했습니다.`);
-        return refresh(match.id);
       }
 
       case '종료': {

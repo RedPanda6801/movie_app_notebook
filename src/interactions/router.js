@@ -60,7 +60,11 @@ async function replyError(interaction, content, err) {
 function createInteractionHandler({ services, commandMap, commandLogger, config, client, fetchImpl }) {
   return async function onInteraction(interaction) {
     const isCommand = interaction.isChatInputCommand();
-    const isComponent = interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit();
+    const isComponent =
+      interaction.isButton() ||
+      interaction.isStringSelectMenu() ||
+      interaction.isUserSelectMenu?.() ||
+      interaction.isModalSubmit();
     if (!isCommand && !isComponent) return;
     const command = isCommand ? commandMap.get(interaction.commandName) : null;
     if (isCommand && !command) return;

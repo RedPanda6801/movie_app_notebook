@@ -29,6 +29,13 @@ const ACTIONS = {
   RECORD_MODAL: 'control.recordModal', // |<matchId>|<판 번호>
   FINISH: 'control.finish',
   CANCEL: 'control.cancel',
+  // /전적 관리 패널
+  STATS_BY_MATCH: 'stats.byMatch',
+  STATS_MATCH_SELECT: 'stats.matchSelect',
+  STATS_GAME_SELECT: 'stats.gameSelect', // |<matchId>
+  STATS_BY_MEMBER: 'stats.byMember',
+  STATS_MEMBER_SELECT: 'stats.memberSelect',
+  STATS_ALL: 'stats.all',
 };
 
 /** 로그에 남길 이름 */
@@ -54,6 +61,12 @@ const ACTION_LABELS = {
   [ACTIONS.RECORD_MODAL]: '대전 기록 - 결과 입력',
   [ACTIONS.FINISH]: '대전 종료',
   [ACTIONS.CANCEL]: '대전 취소',
+  [ACTIONS.STATS_BY_MATCH]: '대전별 전적 조회',
+  [ACTIONS.STATS_MATCH_SELECT]: '대전별 전적 - 대전 선택',
+  [ACTIONS.STATS_GAME_SELECT]: '대전별 전적 - 판 선택',
+  [ACTIONS.STATS_BY_MEMBER]: '개인별 전적 조회',
+  [ACTIONS.STATS_MEMBER_SELECT]: '개인별 전적 - 계정 선택',
+  [ACTIONS.STATS_ALL]: '전체 전적 조회',
 };
 
 function buildId(action, ...args) {

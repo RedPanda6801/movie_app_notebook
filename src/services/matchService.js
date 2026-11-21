@@ -32,7 +32,7 @@ function normalizeGameName(gameName) {
  * 서버(guild)당 진행 중인 대전은 1개만 존재한다. 대전 안에는 1~10판이 있다.
  */
 function createMatchService(repos, accounts) {
-  const { matches, teams, participants, records, recordWinners, accounts: accountRepo, transaction } = repos;
+  const { matches, teams, participants, records, recordPlayers, accounts: accountRepo, transaction } = repos;
 
   function getActiveMatch(guildId) {
     return matches.findActiveByGuild(guildId);
@@ -95,13 +95,34 @@ function createMatchService(repos, accounts) {
     return bySide;
   }
 
-  /** 판별 기록 + 승리자 디스코드 ID 목록 */
+  /** 판별 기록 + 참가자 전적(팀 · K/D/A · CS · 승패) + 승리자 디스코드 ID 목록 */
   function getGames(matchId) {
-    const winners = recordWinners.findByMatch(matchId);
-    return records.findByMatch(matchId).map((r) => ({
-      ...r,
-      winnerDiscordUserIds: winners.filter((w) => w.record_id === r.id).map((w) => w.discord_user_id),
-    }));
+    const players = recordPlayers.findByMatch(matchId);
+    return records.findByMatch(matchId).map((r) => {
+      const list = players.filter((p) => p.record_id === r.id);
+      const winners = list.filter((p) => p.is_win);
+      return {
+        ...r,
+        players: list,
+        winnerSide: winners[0]?.side ?? null,
+        winnerDiscordUserIds: winners.map((p) => p.discord_user_id),
+      };
+    });
+  }
+
+  /** 팀 구성이 1팀 5명 · 2팀 5명으로 끝났는지 */
+  function requireFullTeams(list) {
+    const red = list.filter((p) => p.side === 'RED');
+    const blue = list.filter((p) => p.side === 'BLUE');
+    if (red.length !== TEAM_SIZE || blue.length !== TEAM_SIZE) {
+      throw new UserError(
+        `팀 구성이 끝나야 합니다. (1팀 ${red.length}/${TEAM_SIZE}, 2팀 ${blue.length}/${TEAM_SIZE}) ` +
+          '[팀 등록/변경] 또는 관리 패널의 [팀 랜덤 셔플]로 팀을 나눠 주세요.',
+      );
+    }
+    // 입력 양식과 같은 순서를 보장하기 위해 참가 순서(id)로 정렬한다.
+    const byId = (a, b) => a.id - b.id;
+    return { red: red.sort(byId), blue: blue.sort(byId) };
   }
 
   /** 대전의 현재 상태(참가자, 팀 구성, 판별 기록)를 한 번에 조회한다. */
@@ -216,14 +237,15 @@ function createMatchService(repos, accounts) {
     return match;
   }
 
-  /** 대전 시작: 참가자가 10명이어야 한다. */
+  /** 대전 시작: 참가자가 10명이고 1팀 5명 · 2팀 5명으로 나뉘어 있어야 한다. (판별 기록에 팀이 필요) */
   const start = transaction(({ guildId, discordUserId, matchId = null, isAdmin = false }) => {
     const match = checkManager({ guildId, discordUserId, matchId, isAdmin });
     requireRecruiting(match);
-    const count = participants.countByMatch(match.id);
-    if (count !== MATCH_SIZE) {
-      throw new UserError(`참가자가 ${MATCH_SIZE}명이어야 시작할 수 있습니다. (현재 ${count}명)`);
+    const list = participants.findByMatchWithDetails(match.id);
+    if (list.length !== MATCH_SIZE) {
+      throw new UserError(`참가자가 ${MATCH_SIZE}명이어야 시작할 수 있습니다. (현재 ${list.length}명)`);
     }
+    requireFullTeams(list);
     matches.updateStatus(match.id, MATCH_STATUS.IN_PROGRESS);
     return getMatchView(match.id);
   });
@@ -236,7 +258,9 @@ function createMatchService(repos, accounts) {
     if (recorded >= match.game_count) {
       throw new UserError(`등록한 ${match.game_count}판을 모두 기록했습니다. [대전 종료]를 눌러 주세요.`);
     }
-    return { match, gameNo: recorded + 1, participants: participants.findByMatchWithDetails(match.id) };
+    const list = participants.findByMatchWithDetails(match.id);
+    const { red, blue } = requireFullTeams(list);
+    return { match, gameNo: recorded + 1, participants: list, red, blue };
   }
 
   function recordedByMemberId(guildId, discordUserId) {
@@ -244,56 +268,59 @@ function createMatchService(repos, accounts) {
   }
 
   /**
-   * 판 기록 (캡쳐 + 승리자 5명). 승리자 1명당 승점 1점.
-   * @param {{ winnerDiscordUserIds: string[], screenshotPath: string|null, gameNo: number }} params
+   * 판 기록: 결과 캡쳐 + 승리팀 + 참가자 10명의 K/D/A/CS. 승리팀 1명당 승점 1점.
+   * @param {{
+   *   gameNo: number,
+   *   winnerSide: 'RED'|'BLUE',
+   *   stats: { participantId: number, kills: number, deaths: number, assists: number, cs: number }[],
+   *   screenshotPath: string|null,
+   * }} params
    */
   const recordGame = transaction(
-    ({ guildId, discordUserId, matchId = null, isAdmin = false, gameNo, winnerDiscordUserIds, screenshotPath = null }) => {
-      const { match, gameNo: expected, participants: list } = checkCanRecord({
-        guildId,
-        discordUserId,
-        matchId,
-        isAdmin,
-      });
+    ({ guildId, discordUserId, matchId = null, isAdmin = false, gameNo, winnerSide, stats, screenshotPath = null }) => {
+      if (!SIDES.includes(winnerSide)) throw new UserError('승리팀을 골라 주세요.');
+      const { match, gameNo: expected, red, blue } = checkCanRecord({ guildId, discordUserId, matchId, isAdmin });
       if (gameNo != null && Number(gameNo) !== expected) {
         throw new UserError(`${gameNo}판은 이미 기록되었습니다. 다시 [대전 기록]을 눌러 주세요.`);
       }
-      const ids = [...new Set(winnerDiscordUserIds)];
-      if (ids.length !== TEAM_SIZE) {
-        throw new UserError(`이긴 사람을 정확히 ${TEAM_SIZE}명 골라 주세요.`);
+      const players = [...red, ...blue];
+      const byParticipant = new Map((stats || []).map((s) => [Number(s.participantId), s]));
+      for (const p of players) {
+        const st = byParticipant.get(p.id);
+        const values = st && [st.kills, st.deaths, st.assists, st.cs];
+        if (!values || values.some((v) => !Number.isInteger(v) || v < 0)) {
+          throw new UserError('참가자 10명의 킬/데스/어시/CS를 모두 입력해 주세요.');
+        }
       }
-      const winners = ids.map((id) => list.find((p) => p.discord_user_id === id));
-      if (winners.some((p) => !p)) {
-        throw new UserError('대전 참가자만 승리자로 고를 수 있습니다.');
+      if (byParticipant.size !== players.length) {
+        throw new UserError('대전 참가자만 기록할 수 있습니다.');
       }
+
       const recordId = records.insert({
         matchId: match.id,
         gameNo: expected,
+        winnerTeamId: getTeams(match.id)[winnerSide].id,
         screenshotPath,
         recordedBy: recordedByMemberId(guildId, discordUserId),
       });
-      for (const p of winners) recordWinners.insert(recordId, p.guild_member_id);
+      for (const p of players) {
+        const st = byParticipant.get(p.id);
+        recordPlayers.insert({
+          recordId,
+          guildMemberId: p.guild_member_id,
+          side: p.side,
+          gameName: p.game_name,
+          position: p.position,
+          kills: st.kills,
+          deaths: st.deaths,
+          assists: st.assists,
+          cs: st.cs,
+          isWin: p.side === winnerSide,
+        });
+      }
       return { match, gameNo: expected, recordId };
     },
   );
-
-  /** 판 기록 (팀 기준, 관리자 커맨드용): 해당 팀 5명이 승리자 */
-  const recordGameByTeam = transaction(({ guildId, discordUserId, winnerSide, isAdmin = false }) => {
-    if (!SIDES.includes(winnerSide)) throw new UserError('알 수 없는 팀입니다.');
-    const { match, gameNo, participants: list } = checkCanRecord({ guildId, discordUserId, isAdmin });
-    const winners = list.filter((p) => p.side === winnerSide);
-    if (winners.length !== TEAM_SIZE) {
-      throw new UserError('팀 구성이 끝나지 않아 팀 기준으로 기록할 수 없습니다. `/팀 셔플` 또는 [대전 기록] 버튼을 이용해 주세요.');
-    }
-    const recordId = records.insert({
-      matchId: match.id,
-      gameNo,
-      winnerTeamId: getTeams(match.id)[winnerSide].id,
-      recordedBy: recordedByMemberId(guildId, discordUserId),
-    });
-    for (const p of winners) recordWinners.insert(recordId, p.guild_member_id);
-    return { match, gameNo };
-  });
 
   /** 대전 종료: 기록된 판까지 승점에 반영된다. */
   const finish = transaction(({ guildId, discordUserId, matchId = null, isAdmin = false }) => {
@@ -330,7 +357,6 @@ function createMatchService(repos, accounts) {
     start,
     checkCanRecord,
     recordGame,
-    recordGameByTeam,
     finish,
     cancel,
   };

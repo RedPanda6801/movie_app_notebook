@@ -21,13 +21,12 @@ function createGuildMemberRepository(db) {
     findRankingByGuild: db.prepare(`
       SELECT a.discord_user_id, gm.display_name,
              COUNT(r.id) AS games,
-             COUNT(w.record_id) AS wins
+             COALESCE(SUM(CASE WHEN r.id IS NOT NULL THEN p.is_win END), 0) AS wins
         FROM guild_member gm
         JOIN account a ON a.id = gm.account_id
-        LEFT JOIN match_participant mp ON mp.guild_member_id = gm.id
-        LEFT JOIN match m ON m.id = mp.match_id AND m.status = 'FINISHED'
-        LEFT JOIN match_record r ON r.match_id = m.id
-        LEFT JOIN match_record_winner w ON w.record_id = r.id AND w.guild_member_id = gm.id
+        LEFT JOIN match_record_player p ON p.guild_member_id = gm.id
+        LEFT JOIN match_record r ON r.id = p.record_id
+         AND r.match_id IN (SELECT id FROM match WHERE status = 'FINISHED')
        WHERE gm.guild_id = ? AND gm.status = 'ACTIVE'
        GROUP BY gm.id
        ORDER BY wins DESC, games ASC, gm.registered_at ASC
