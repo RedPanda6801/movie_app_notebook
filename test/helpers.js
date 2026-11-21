@@ -6,7 +6,7 @@ function setup({ random } = {}) {
   const services = createServices(db, { random });
   const guild = services.guilds.ensureGuild('guild-1', '테스트 서버');
   const users = Array.from({ length: 12 }, (_, i) => `user-${i + 1}`);
-  const gameName = (u) => `${u}#KR1`;
+  const gameName = (u) => `lol${u.replace(/\W/g, "")}#KR1`;
   const register = (u, g = guild) =>
     services.accounts.register({ guildId: g.id, discordUserId: u, username: u });
   const create = (u, gameCount = 3, g = guild) =>

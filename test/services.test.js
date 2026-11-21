@@ -24,6 +24,9 @@ test('롤 아이디 형식 검사', () => {
   assert.equal(normalizeGameName('  Hide on bush # KR1 '), 'Hide on bush#KR1');
   assert.throws(() => normalizeGameName('태그없음'), isUserError(/게임이름#태그/));
   assert.throws(() => normalizeGameName('a#b#c'), isUserError(/게임이름#태그/));
+  assert.throws(() => normalizeGameName('드므드므드#KR!'), isUserError(/특수문자/), '태그에 특수문자 불가');
+  assert.throws(() => normalizeGameName('ab#KR1'), isUserError(/3~16자/), '게임이름 3자 이상');
+  assert.equal(normalizeGameName('드므드므드#KR1'), '드므드므드#KR1');
 });
 
 test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () => {
@@ -37,7 +40,7 @@ test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () 
   assert.equal(match.game_count, 5);
   const view = services.matches.getMatchView(match.id);
   assert.equal(view.participants.length, 1);
-  assert.equal(view.participants[0].game_name, 'u1#KR1');
+  assert.equal(view.participants[0].game_name, 'lolu1#KR1');
   assert.equal(view.creatorDiscordUserId, 'u1');
   assert.throws(() => create('u1'), isUserError(/하나만/));
 
@@ -47,7 +50,7 @@ test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () 
 });
 
 test('대전 참가: 롤 아이디 필수, 10명 제한, 옛 대전 버튼 차단, 마지막 아이디 기억', () => {
-  const { services, guild, users, register, create, join } = setup();
+  const { services, guild, users, register, create, join, gameName } = setup();
   users.forEach((u) => register(u));
   const match = create(users[0]);
   assert.throws(
@@ -61,7 +64,7 @@ test('대전 참가: 롤 아이디 필수, 10명 제한, 옛 대전 버튼 차�
   for (const u of users.slice(1, 10)) join(u);
   assert.throws(() => join(users[1]), isUserError(/이미/));
   assert.throws(() => join(users[10]), isUserError(/모두 찼/));
-  assert.equal(services.accounts.getActiveMember(guild.id, users[1]).last_game_name, `${users[1]}#KR1`);
+  assert.equal(services.accounts.getActiveMember(guild.id, users[1]).last_game_name, gameName(users[1]));
 
   assert.equal(services.matches.leave({ guildId: guild.id, discordUserId: users[1] }).count, 9);
 });
