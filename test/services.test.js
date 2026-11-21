@@ -244,16 +244,22 @@ test('팀 등록/변경 (버튼): 1팀 · 2팀 · 미정, 팀당 5명, 같은 �
   assert.throws(() => setTeam(users[5], 'PURPLE'), isUserError(/알 수 없는 팀/));
 });
 
-test('팀 랜덤 셔플: 관리자/대전 등록자만, 10명일 때만, 직접 고른 팀은 유지', () => {
+test('팀 랜덤 셔플: 관리자/대전 등록자만, 2명 이상이면 가능, 직접 고른 팀은 유지', () => {
   const { services, guild, users, register, create, join } = setup();
   users.slice(0, 10).forEach((u) => register(u));
   const match = create(users[0]);
-  users.slice(1, 9).forEach((u) => join(u));
   const shuffle = (u, extra = {}) =>
     services.teams.shuffle({ guildId: guild.id, discordUserId: u, matchId: match.id, ...extra });
 
-  assert.throws(() => shuffle(users[0]), isUserError(/10명/));
-  join(users[9]);
+  assert.throws(() => shuffle(users[0]), isUserError(/2명 이상/));
+  users.slice(1, 7).forEach((u) => join(u)); // 7명
+  const partial = shuffle(users[0]);
+  assert.equal(partial.red.length + partial.blue.length, 7, '10명이 안 되어도 셔플된다');
+  assert.equal(partial.unassigned.length, 0);
+  assert.ok(Math.abs(partial.red.length - partial.blue.length) <= 1);
+  // 셔플 후 새 참가자가 오면 셔플 결과는 초기화된다 (직접 고른 사람 제외)
+  users.slice(7, 10).forEach((u) => join(u));
+  assert.equal(services.matches.getMatchView(match.id).unassigned.length, 10);
   assert.throws(() => shuffle(users[1]), isUserError(/권한이 없습니다/));
   services.teams.setTeam({ guildId: guild.id, discordUserId: users[3], matchId: match.id, side: 'BLUE' });
 

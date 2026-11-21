@@ -1,6 +1,6 @@
-const { MATCH_SIZE, TEAM_SIZE, SIDES } = require('../constants');
+const { TEAM_SIZE, SIDES } = require('../constants');
 const { UserError } = require('../utils/errors');
-const { shuffleTeams } = require('./shuffle');
+const { shuffleTeams, MIN_SHUFFLE_SIZE } = require('./shuffle');
 
 /**
  * 대전관리 서비스 - 팀 관리 (팀 등록, 팀 탈퇴, 팀 자동셔플)
@@ -71,14 +71,14 @@ function createTeamService(repos, accounts, matches, random = Math.random) {
     return { match, side };
   });
 
-  /** 팀 자동셔플: 관리자 또는 대전 등록자만, 참가자가 10명일 때만 사용할 수 있다. */
+  /** 팀 자동셔플: 관리자 또는 대전 등록자만. 참가자가 10명이 안 되어도(2명 이상) 쓸 수 있다. */
   const shuffle = transaction(({ guildId, discordUserId, matchId = null, isAdmin = false }) => {
     const match = matches.checkManager({ guildId, discordUserId, matchId, isAdmin });
     matches.requireRecruiting(match);
     const list = matches.getMatchView(match.id).participants;
-    if (list.length !== MATCH_SIZE) {
+    if (list.length < MIN_SHUFFLE_SIZE) {
       throw new UserError(
-        `팀 자동셔플은 대전에 ${MATCH_SIZE}명이 등록되어 있어야 사용할 수 있습니다. (현재 ${list.length}명)`,
+        `팀 랜덤 셔플은 참가자가 ${MIN_SHUFFLE_SIZE}명 이상일 때 할 수 있습니다. (현재 ${list.length}명)`,
       );
     }
     const teams = matches.getTeams(match.id);
