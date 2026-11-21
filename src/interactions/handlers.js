@@ -8,6 +8,12 @@ const { postMatchMessage, refreshMatchMessage, postFinishMessage } = require('./
 
 /**
  * 버튼 / 선택 메뉴 / 입력창(모달) 처리.
+ *
+ * ⚠️ 디스코드는 상호작용에 **3초 안에** 첫 응답(reply/update/showModal/defer)을 받아야 한다.
+ *    늦으면 "Unknown interaction(10062)" 오류가 나고 사용자는 응답을 못 받는다.
+ *    그래서 네트워크를 타는 작업(공개 메시지 갱신/게시, 캡쳐 다운로드)은
+ *    - 응답을 먼저 보낸 **뒤에** 하거나 (refreshMatchMessage)
+ *    - 응답 결과에 필요하면 **defer로 먼저 예약**한 뒤 처리하고 editReply 한다.
  * 모든 응답은 기본적으로 누른 사람에게만 보인다(ephemeral).
  * 모두에게 보이는 메시지는 공개 대전 정보 메시지와 대전 종료 알림뿐이다.
  *
@@ -61,10 +67,10 @@ const handlers = {
       guildId: ctx.guild.id,
       discordUserId: interaction.user.id,
     });
-    if (leftMatchId) await refreshMatchMessage(ctx.client, ctx.services, leftMatchId);
-    return interaction.reply(
+    await interaction.reply(
       `👋 계정을 탈퇴했습니다.${leftMatchId ? ` 참가 중이던 대전 #${leftMatchId}에서도 빠졌습니다.` : ''}`,
     );
+    if (leftMatchId) await refreshMatchMessage(ctx.client, ctx.services, leftMatchId);
   },
 
   /* ───────────── /대전 관리 패널 ───────────── */
@@ -100,6 +106,8 @@ const handlers = {
   },
 
   async [ACTIONS.CREATE_MODAL](interaction, ctx, [gameCount]) {
+    // 공개 메시지 게시(네트워크)가 끝나야 결과를 알려줄 수 있으므로 먼저 응답을 예약한다.
+    await interaction.deferReply();
     const match = ctx.services.matches.createMatch({
       ...base(interaction, ctx),
       channelId: interaction.channelId,
@@ -114,7 +122,7 @@ const handlers = {
       console.error('대전 정보 메시지 전송 실패:', err.message);
       notice += '\n⚠️ 채널에 대전 정보 메시지를 올리지 못했습니다. 봇에게 이 채널의 메시지 보내기 권한이 있는지 확인해 주세요.';
     }
-    return interaction.reply(views.controlPanel(ctx.services.matches.getMatchView(match.id), notice));
+    return interaction.editReply(views.controlPanel(ctx.services.matches.getMatchView(match.id), notice));
   },
 
   /* ───────────── 공개 대전 정보 메시지 버튼 ───────────── */
@@ -129,17 +137,17 @@ const handlers = {
   async [ACTIONS.JOIN_MODAL](interaction, ctx, [matchId]) {
     const gameName = interaction.fields.getTextInputValue('gameName');
     const { match, count } = ctx.services.matches.join({ ...base(interaction, ctx, matchId), gameName });
-    await refreshMatchMessage(ctx.client, ctx.services, match.id);
     const lines = [`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE})`];
     if (count === MATCH_SIZE) lines.push('🎉 10명이 모두 모였습니다! 관리자가 대전을 시작하면 진행됩니다.');
-    lines.push('포지션은 대전 정보 메시지의 [포지션 등록/변경] 버튼으로 정할 수 있습니다.');
-    return interaction.reply(lines.join('\n'));
+    lines.push('포지션과 팀은 대전 정보 메시지의 [포지션 등록/변경] · [팀 등록/변경] 버튼으로 정할 수 있습니다.');
+    await interaction.reply(lines.join('\n'));
+    await refreshMatchMessage(ctx.client, ctx.services, match.id);
   },
 
   async [ACTIONS.LEAVE](interaction, ctx, [matchId]) {
     const { match, count } = ctx.services.matches.leave(base(interaction, ctx, matchId));
+    await interaction.reply(`🚪 대전 #${match.id} 참가를 철회했습니다. (${count}/${MATCH_SIZE})`);
     await refreshMatchMessage(ctx.client, ctx.services, match.id);
-    return interaction.reply(`🚪 대전 #${match.id} 참가를 철회했습니다. (${count}/${MATCH_SIZE})`);
   },
 
   async [ACTIONS.VIEW](interaction, ctx, [matchId]) {
@@ -182,13 +190,13 @@ const handlers = {
     const value = interaction.values[0];
     const side = SIDES.includes(value) ? value : null;
     const { match } = ctx.services.teams.setTeam({ ...base(interaction, ctx, matchId), side });
-    await refreshMatchMessage(ctx.client, ctx.services, match.id);
-    return interaction.update({
+    await interaction.update({
       content: side
         ? `👥 이번 대전 팀: **${SIDE_LABELS[side]}** (팀 셔플에서 제외됩니다)`
         : `👥 이번 대전 팀: **${UNDECIDED_LABEL}** (팀 셔플로 정해집니다)`,
       components: [],
     });
+    await refreshMatchMessage(ctx.client, ctx.services, match.id);
   },
 
   async [ACTIONS.MANAGE](interaction, ctx, [matchId]) {
@@ -200,16 +208,16 @@ const handlers = {
 
   async [ACTIONS.SHUFFLE](interaction, ctx, [matchId]) {
     const view = ctx.services.teams.shuffle(base(interaction, ctx, matchId));
-    await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
-    return interaction.update(
+    await interaction.update(
       views.controlPanel(view, '🎲 팀을 랜덤으로 섞었습니다. 마음에 들지 않으면 다시 눌러 주세요.', [views.teamsEmbed(view)]),
     );
+    await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
   },
 
   async [ACTIONS.START](interaction, ctx, [matchId]) {
     const view = ctx.services.matches.start(base(interaction, ctx, matchId));
+    await interaction.update(views.controlPanel(view, '▶️ 대전을 시작했습니다. 판이 끝날 때마다 [대전 기록]으로 결과를 등록해 주세요.'));
     await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
-    return interaction.update(views.controlPanel(view, '▶️ 대전을 시작했습니다. 판이 끝날 때마다 [대전 기록]으로 결과를 등록해 주세요.'));
   },
 
   async [ACTIONS.RECORD](interaction, ctx, [matchId]) {
@@ -243,21 +251,22 @@ const handlers = {
       await removeScreenshot(screenshotPath);
       throw err;
     }
-    await refreshMatchMessage(ctx.client, ctx.services, result.match.id);
     const view = ctx.services.matches.getMatchView(result.match.id);
     const done = view.games.length >= view.match.game_count;
-    return interaction.editReply(
+    await interaction.editReply(
       views.controlPanel(
         view,
         `📸 **${result.gameNo}판** 결과를 기록했습니다. (${view.games.length}/${view.match.game_count}판)` +
           (done ? '\n모든 판을 기록했습니다. [대전 종료]를 눌러 결과를 공개해 주세요.' : ''),
       ),
     );
+    await refreshMatchMessage(ctx.client, ctx.services, result.match.id);
   },
 
   async [ACTIONS.FINISH](interaction, ctx, [matchId]) {
     const view = ctx.services.matches.finish(base(interaction, ctx, matchId));
-    await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
+    // 종료 알림 게시(네트워크, 캡쳐 첨부)가 끝나야 결과를 알려줄 수 있으므로 먼저 응답을 예약한다.
+    await interaction.deferUpdate();
     let notice = '🏁 대전을 종료했습니다. 채널에 결과를 공개했습니다.';
     try {
       await postFinishMessage(await resolveMatchChannel(interaction, view.match), ctx.services, view.match.id);
@@ -265,13 +274,14 @@ const handlers = {
       console.error('대전 종료 알림 전송 실패:', err.message);
       notice = '🏁 대전을 종료했지만 채널에 결과를 올리지 못했습니다. 봇의 메시지 보내기/파일 첨부 권한을 확인해 주세요.';
     }
-    return interaction.update(views.controlPanel(view, notice));
+    await interaction.editReply(views.controlPanel(view, notice));
+    await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
   },
 
   async [ACTIONS.CANCEL](interaction, ctx, [matchId]) {
     const view = ctx.services.matches.cancel(base(interaction, ctx, matchId));
+    await interaction.update(views.controlPanel(view, `🛑 대전 #${view.match.id}을(를) 취소했습니다.`));
     await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
-    return interaction.update(views.controlPanel(view, `🛑 대전 #${view.match.id}을(를) 취소했습니다.`));
   },
 };
 

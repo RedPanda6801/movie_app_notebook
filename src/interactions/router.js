@@ -32,11 +32,16 @@ function wrapResponses(interaction, onMessage) {
   wrap('followUp', withVisibility);
   wrap('deferReply', (p) => withVisibility(p ?? {}));
   wrap('update');
+  wrap('deferUpdate');
   wrap('editReply');
   wrap('showModal');
 }
 
-async function replyError(interaction, content) {
+/** 3초 응답 제한을 넘겨 디스코드가 이미 버린 상호작용 */
+const UNKNOWN_INTERACTION = 10062;
+
+async function replyError(interaction, content, err) {
+  if (err?.code === UNKNOWN_INTERACTION) return; // 응답할 수 없는 상태라 다시 시도하지 않는다.
   try {
     if (interaction.deferred && !interaction.replied) await interaction.editReply({ content, embeds: [], components: [] });
     else if (interaction.replied) await interaction.followUp({ content });
@@ -85,9 +90,15 @@ function createInteractionHandler({ services, commandMap, commandLogger, config,
     } catch (err) {
       success = false;
       const isUserError = err instanceof UserError;
-      if (!isUserError) console.error(`${describeInteraction(interaction, labelFor)} 처리 중 오류:`, err);
+      if (err?.code === UNKNOWN_INTERACTION) {
+        console.error(
+          `${describeInteraction(interaction, labelFor)}: 3초 안에 응답하지 못해 디스코드가 요청을 버렸습니다. (네트워크 지연 확인)`,
+        );
+      } else if (!isUserError) {
+        console.error(`${describeInteraction(interaction, labelFor)} 처리 중 오류:`, err);
+      }
       const content = isUserError ? `⚠️ ${err.message}` : '❌ 요청을 처리하는 중 오류가 발생했습니다.';
-      await replyError(interaction, content);
+      await replyError(interaction, content, err);
       resultMessage = isUserError ? content : `${content} (${err?.message ?? err})`;
     }
 

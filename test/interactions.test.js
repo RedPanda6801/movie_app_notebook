@@ -95,6 +95,7 @@ function createHarness() {
       editReply: record('editReply'),
       followUp: record('followUp'),
       deferReply: record('deferReply'),
+      deferUpdate: record('deferUpdate'),
       showModal: record('showModal'),
     };
     await handler(interaction);
@@ -145,9 +146,10 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.ok(isEphemeral(calls[0].payload));
   calls = await send({ kind: 'select', user: 'u1', customId: 'create.games', values: ['2'] });
   assert.equal(calls[0].type, 'showModal');
-  calls = await send({ kind: 'modal', user: 'u1', customId: 'create.modal|2', fields: { gameName: 'u1#KR1' } });
-  assert.match(textOf(calls[0].payload), /대전 #1\*\*\(2판\)이 등록되었고/);
+  calls = await send({ kind: 'modal', user: 'u1', customId: 'create.modal|2', fields: { gameName: 'lolu1#KR1' } });
+  assert.equal(calls[0].type, 'deferReply', '공개 메시지 게시 전에 먼저 응답을 예약한다 (3초 제한)');
   assert.ok(isEphemeral(calls[0].payload), '등록자 관리 패널은 본인만');
+  assert.match(textOf(calls[1].payload), /대전 #1\*\*\(2판\)이 등록되었고/);
   assert.equal(discord.sent.length, 1, '공개 대전 정보 메시지가 올라가야 한다');
   const matchMessage = discord.sent[0];
   assert.ok(!matchMessage.payload.flags, '대전 정보 메시지는 모두에게 보인다');
@@ -156,11 +158,19 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'button', user: 'u2', customId: 'panel.create' });
   assert.match(textOf(calls[0].payload), /하나만/);
 
+  // 롤 아이디를 잘못 입력하면 본인에게 형식 안내 (참가되지 않음)
+  calls = await send({ kind: 'modal', user: 'u2', customId: 'match.joinModal|1', fields: { gameName: '드므드므드#KR!' } });
+  assert.equal(calls[0].type, 'reply');
+  assert.ok(isEphemeral(calls[0].payload));
+  assert.match(textOf(calls[0].payload), /⚠️ 롤 아이디는 `게임이름#태그` 형식/);
+  assert.equal(services.matches.getMatchView(1).participants.length, 1);
+
   // 나머지 9명 참가 (버튼 → 아이디 입력창)
   for (const u of users.slice(1)) {
     calls = await send({ kind: 'button', user: u, customId: 'match.join|1' });
     assert.equal(calls[0].type, 'showModal');
-    calls = await send({ kind: 'modal', user: u, customId: 'match.joinModal|1', fields: { gameName: `${u}#KR1` } });
+    calls = await send({ kind: 'modal', user: u, customId: 'match.joinModal|1', fields: { gameName: `lol${u}#KR1` } });
+    assert.equal(calls[0].type, 'reply', '공개 메시지 갱신보다 응답이 먼저다 (3초 제한)');
     assert.match(textOf(calls[0].payload), /참가했습니다/);
     assert.ok(isEphemeral(calls[0].payload), '참가 알림은 본인만');
   }
@@ -207,7 +217,7 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   // 대전 조회 (본인만, 포지션/아이디 표시)
   calls = await send({ kind: 'button', user: 'u3', customId: 'match.view|1' });
   assert.ok(isEphemeral(calls[0].payload));
-  assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /u2>.*미드.*u2#KR1/);
+  assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /u2>.*미드.*lolu2#KR1/);
 
   // 대전 관리: 일반 참가자는 권한 없음, 관리자/등록자는 가능
   calls = await send({ kind: 'button', user: 'u5', customId: 'match.manage|1' });
@@ -247,7 +257,8 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
 
   // 대전 종료 → 모두에게 보이는 종료 알림 (캡쳐 첨부)
   calls = await send({ kind: 'button', user: 'u1', customId: 'control.finish|1' });
-  assert.equal(calls[0].type, 'update');
+  assert.equal(calls[0].type, 'deferUpdate', '종료 알림 게시 전에 먼저 응답을 예약한다 (3초 제한)');
+  assert.equal(calls[1].type, 'editReply');
   assert.equal(discord.sent.length, 2);
   const finish = discord.sent[1].payload;
   assert.match(finish.content, /대전 #1이\(가\) 종료되었습니다/);
@@ -266,6 +277,6 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   // 서버별 로그
   const log = fs.readFileSync(path.join(tmp, 'logs', 'guild-1.log'), 'utf8');
   assert.match(log, /\[버튼\] 대전 참가 \| u2님 \(u2, u2\) \| 성공/);
-  assert.match(log, /\[입력\] 대전 참가 - 롤 아이디 입력: u3#KR1/);
+  assert.match(log, /\[입력\] 대전 참가 - 롤 아이디 입력: lolu3#KR1/);
   assert.match(log, /\[버튼\] 대전 관리 \| u5님 .* \| 실패 \| ⚠️ 권한이 없습니다/);
 });

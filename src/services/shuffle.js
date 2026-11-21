@@ -27,11 +27,14 @@ function positionConflicts(members) {
   return conflicts;
 }
 
+/** 셔플에 필요한 최소 인원 */
+const MIN_SHUFFLE_SIZE = 2;
+
 /**
- * 팀 자동셔플.
+ * 팀 자동셔플. 참가자가 10명이 안 되어도 쓸 수 있다. (2~10명)
  * - lockedSide가 있는 참가자(팀 직접 등록자)는 셔플에서 제외하고 그 팀에 고정한다.
- * - 나머지 참가자를 두 팀이 5명씩이 되도록 나누되,
- *   같은 팀 안에서 포지션이 겹치는 경우가 가장 적은 배치를 우선 고른다. (포지션 우선)
+ * - 나머지 참가자를 두 팀 인원이 **최대한 같도록** 나눈다. (팀당 최대 5명, 홀수면 1명 차이)
+ * - 그중 같은 팀 안에서 포지션이 겹치는 경우가 가장 적은 배치를 우선 고른다. (포지션 우선)
  * - 같은 조건의 후보가 여러 개면 그중 하나를 무작위로 고른다.
  *
  * @param {{ id: number, position: string|null, lockedSide: 'RED'|'BLUE'|null }[]} participants
@@ -39,8 +42,8 @@ function positionConflicts(members) {
  * @returns {Map<number, 'RED'|'BLUE'>} 참가자 id -> 배정된 팀
  */
 function shuffleTeams(participants, random = Math.random) {
-  if (participants.length !== TEAM_SIZE * 2) {
-    throw new Error(`셔플에는 정확히 ${TEAM_SIZE * 2}명이 필요합니다.`);
+  if (participants.length < MIN_SHUFFLE_SIZE || participants.length > TEAM_SIZE * 2) {
+    throw new Error(`셔플은 ${MIN_SHUFFLE_SIZE}~${TEAM_SIZE * 2}명일 때 할 수 있습니다.`);
   }
 
   const lockedRed = participants.filter((p) => p.lockedSide === 'RED');
@@ -51,23 +54,35 @@ function shuffleTeams(participants, random = Math.random) {
     throw new Error(`한 팀에는 최대 ${TEAM_SIZE}명까지 등록할 수 있습니다.`);
   }
 
-  const redSlots = TEAM_SIZE - lockedRed.length;
+  // 1) 1팀에 넣을 자유 인원 수 후보: 팀당 5명을 넘지 않고, 두 팀 인원 차이가 가장 작은 값들
+  const options = [];
+  for (let k = 0; k <= free.length; k += 1) {
+    const red = lockedRed.length + k;
+    const blue = lockedBlue.length + free.length - k;
+    if (red <= TEAM_SIZE && blue <= TEAM_SIZE) options.push({ k, gap: Math.abs(red - blue) });
+  }
+  const minGap = Math.min(...options.map((o) => o.gap));
+  const redSlotCandidates = options.filter((o) => o.gap === minGap).map((o) => o.k);
 
+  // 2) 그 인원 배분 안에서 포지션 겹침이 가장 적은 조합들
   let best = [];
   let bestCost = Infinity;
-  for (const combo of combinations(free.length, redSlots)) {
-    const inRed = new Set(combo);
-    const red = [...lockedRed, ...free.filter((_, i) => inRed.has(i))];
-    const blue = [...lockedBlue, ...free.filter((_, i) => !inRed.has(i))];
-    const cost = positionConflicts(red) + positionConflicts(blue);
-    if (cost < bestCost) {
-      bestCost = cost;
-      best = [inRed];
-    } else if (cost === bestCost) {
-      best.push(inRed);
+  for (const redSlots of redSlotCandidates) {
+    for (const combo of combinations(free.length, redSlots)) {
+      const inRed = new Set(combo);
+      const red = [...lockedRed, ...free.filter((_, i) => inRed.has(i))];
+      const blue = [...lockedBlue, ...free.filter((_, i) => !inRed.has(i))];
+      const cost = positionConflicts(red) + positionConflicts(blue);
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = [inRed];
+      } else if (cost === bestCost) {
+        best.push(inRed);
+      }
     }
   }
 
+  // 3) 무작위로 하나 선택
   const chosen = best[Math.floor(random() * best.length)];
   const result = new Map();
   for (const p of lockedRed) result.set(p.id, 'RED');
@@ -76,4 +91,4 @@ function shuffleTeams(participants, random = Math.random) {
   return result;
 }
 
-module.exports = { shuffleTeams, positionConflicts };
+module.exports = { shuffleTeams, positionConflicts, MIN_SHUFFLE_SIZE };

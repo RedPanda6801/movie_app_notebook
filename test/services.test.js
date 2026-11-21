@@ -24,6 +24,9 @@ test('롤 아이디 형식 검사', () => {
   assert.equal(normalizeGameName('  Hide on bush # KR1 '), 'Hide on bush#KR1');
   assert.throws(() => normalizeGameName('태그없음'), isUserError(/게임이름#태그/));
   assert.throws(() => normalizeGameName('a#b#c'), isUserError(/게임이름#태그/));
+  assert.throws(() => normalizeGameName('드므드므드#KR!'), isUserError(/특수문자/), '태그에 특수문자 불가');
+  assert.throws(() => normalizeGameName('ab#KR1'), isUserError(/3~16자/), '게임이름 3자 이상');
+  assert.equal(normalizeGameName('드므드므드#KR1'), '드므드므드#KR1');
 });
 
 test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () => {
@@ -37,7 +40,7 @@ test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () 
   assert.equal(match.game_count, 5);
   const view = services.matches.getMatchView(match.id);
   assert.equal(view.participants.length, 1);
-  assert.equal(view.participants[0].game_name, 'u1#KR1');
+  assert.equal(view.participants[0].game_name, 'lolu1#KR1');
   assert.equal(view.creatorDiscordUserId, 'u1');
   assert.throws(() => create('u1'), isUserError(/하나만/));
 
@@ -47,7 +50,7 @@ test('대전 등록: 판 수 1~10, 등록자 자동 참가, 서버당 1개', () 
 });
 
 test('대전 참가: 롤 아이디 필수, 10명 제한, 옛 대전 버튼 차단, 마지막 아이디 기억', () => {
-  const { services, guild, users, register, create, join } = setup();
+  const { services, guild, users, register, create, join, gameName } = setup();
   users.forEach((u) => register(u));
   const match = create(users[0]);
   assert.throws(
@@ -61,7 +64,7 @@ test('대전 참가: 롤 아이디 필수, 10명 제한, 옛 대전 버튼 차�
   for (const u of users.slice(1, 10)) join(u);
   assert.throws(() => join(users[1]), isUserError(/이미/));
   assert.throws(() => join(users[10]), isUserError(/모두 찼/));
-  assert.equal(services.accounts.getActiveMember(guild.id, users[1]).last_game_name, `${users[1]}#KR1`);
+  assert.equal(services.accounts.getActiveMember(guild.id, users[1]).last_game_name, gameName(users[1]));
 
   assert.equal(services.matches.leave({ guildId: guild.id, discordUserId: users[1] }).count, 9);
 });
@@ -241,16 +244,22 @@ test('팀 등록/변경 (버튼): 1팀 · 2팀 · 미정, 팀당 5명, 같은 �
   assert.throws(() => setTeam(users[5], 'PURPLE'), isUserError(/알 수 없는 팀/));
 });
 
-test('팀 랜덤 셔플: 관리자/대전 등록자만, 10명일 때만, 직접 고른 팀은 유지', () => {
+test('팀 랜덤 셔플: 관리자/대전 등록자만, 2명 이상이면 가능, 직접 고른 팀은 유지', () => {
   const { services, guild, users, register, create, join } = setup();
   users.slice(0, 10).forEach((u) => register(u));
   const match = create(users[0]);
-  users.slice(1, 9).forEach((u) => join(u));
   const shuffle = (u, extra = {}) =>
     services.teams.shuffle({ guildId: guild.id, discordUserId: u, matchId: match.id, ...extra });
 
-  assert.throws(() => shuffle(users[0]), isUserError(/10명/));
-  join(users[9]);
+  assert.throws(() => shuffle(users[0]), isUserError(/2명 이상/));
+  users.slice(1, 7).forEach((u) => join(u)); // 7명
+  const partial = shuffle(users[0]);
+  assert.equal(partial.red.length + partial.blue.length, 7, '10명이 안 되어도 셔플된다');
+  assert.equal(partial.unassigned.length, 0);
+  assert.ok(Math.abs(partial.red.length - partial.blue.length) <= 1);
+  // 셔플 후 새 참가자가 오면 셔플 결과는 초기화된다 (직접 고른 사람 제외)
+  users.slice(7, 10).forEach((u) => join(u));
+  assert.equal(services.matches.getMatchView(match.id).unassigned.length, 10);
   assert.throws(() => shuffle(users[1]), isUserError(/권한이 없습니다/));
   services.teams.setTeam({ guildId: guild.id, discordUserId: users[3], matchId: match.id, side: 'BLUE' });
 

@@ -291,13 +291,13 @@ function controlPanel(view, notice = null, embeds = []) {
     `참가자 ${participants.length}/${MATCH_SIZE}명 · 기록 ${games.length}/${match.game_count}판`,
   ];
   if (recruiting && participants.length < MATCH_SIZE) {
-    lines.push(`팀 랜덤 셔플과 대전 시작은 ${MATCH_SIZE}명이 모두 모여야 할 수 있습니다.`);
+    lines.push(`팀 랜덤 셔플은 2명 이상이면 할 수 있고, 대전 시작은 ${MATCH_SIZE}명이 모두 모여야 합니다.`);
   }
   if (notice) lines.unshift(notice, '');
 
   const row = new ActionRowBuilder().addComponents(
     button(buildId(ACTIONS.SHUFFLE, match.id), '팀 랜덤 셔플', ButtonStyle.Secondary, '🎲').setDisabled(
-      !recruiting || participants.length !== MATCH_SIZE,
+      !recruiting || participants.length < 2,
     ),
     button(buildId(ACTIONS.START, match.id), '대전 시작', ButtonStyle.Success, '▶️').setDisabled(!recruiting),
     button(buildId(ACTIONS.RECORD, match.id), '대전 기록', ButtonStyle.Primary, '📸').setDisabled(

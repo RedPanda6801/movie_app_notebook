@@ -69,14 +69,14 @@ module.exports = {
       case '참가': {
         const gameName = interaction.options.getString('아이디');
         const { match, count } = matches.join({ ...base, gameName, requireGameName: false });
-        await refresh(match.id);
-        return interaction.reply(`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE})`);
+        await interaction.reply(`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE})`);
+        return refresh(match.id);
       }
 
       case '탈퇴': {
         const { match, count } = matches.leave(base);
-        await refresh(match.id);
-        return interaction.reply(`🚪 대전 참가를 철회했습니다. (${count}/${MATCH_SIZE})`);
+        await interaction.reply(`🚪 대전 참가를 철회했습니다. (${count}/${MATCH_SIZE})`);
+        return refresh(match.id);
       }
 
       case '포지션': {
@@ -100,28 +100,29 @@ module.exports = {
 
       case '시작': {
         const view = matches.start(base);
-        await refresh(view.match.id);
-        return interaction.reply('▶️ 대전을 시작했습니다.');
+        await interaction.reply('▶️ 대전을 시작했습니다.');
+        return refresh(view.match.id);
       }
 
       case '결과': {
         const winnerSide = interaction.options.getString('승리팀', true);
         const { match, gameNo } = matches.recordGameByTeam({ ...base, winnerSide });
-        await refresh(match.id);
-        return interaction.reply(`📸 ${gameNo}판: **${SIDE_LABELS[winnerSide]}** 승리로 기록했습니다.`);
+        await interaction.reply(`📸 ${gameNo}판: **${SIDE_LABELS[winnerSide]}** 승리로 기록했습니다.`);
+        return refresh(match.id);
       }
 
       case '종료': {
         const view = matches.finish(base);
-        await refresh(view.match.id);
+        await interaction.deferReply(); // 종료 알림 게시(네트워크) 전에 3초 제한을 피한다.
         await postFinishMessage(interaction.channel, services, view.match.id);
-        return interaction.reply('🏁 대전을 종료하고 결과를 채널에 공개했습니다.');
+        await interaction.editReply('🏁 대전을 종료하고 결과를 채널에 공개했습니다.');
+        return refresh(view.match.id);
       }
 
       case '취소': {
         const { match } = matches.cancel(base);
-        await refresh(match.id);
-        return interaction.reply(`🛑 대전 #${match.id}이(가) 취소되었습니다.`);
+        await interaction.reply(`🛑 대전 #${match.id}이(가) 취소되었습니다.`);
+        return refresh(match.id);
       }
     }
   },
