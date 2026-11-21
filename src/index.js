@@ -1,15 +1,10 @@
-const { Client, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
+const { Client, Events, GatewayIntentBits } = require('discord.js');
 const config = require('./config');
 const { openDatabase } = require('./db');
 const { createServices } = require('./services');
 const { commands } = require('./commands');
-const { UserError } = require('./utils/errors');
-const {
-  createCommandLogger,
-  describeCommand,
-  describeUser,
-  describeReply,
-} = require('./utils/commandLogger');
+const { createInteractionHandler } = require('./interactions/router');
+const { createCommandLogger } = require('./utils/commandLogger');
 
 const db = openDatabase(config.databasePath);
 const services = createServices(db);
@@ -42,55 +37,11 @@ client.on(Events.GuildDelete, (guild) => {
   console.log(`서버 퇴장: ${guild.name ?? ''} (${guild.id})`);
 });
 
-// [수동] 슬래시 커맨드 처리
-client.on(Events.InteractionCreate, async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  const command = commandMap.get(interaction.commandName);
-  if (!command) return;
-
-  // 커맨드가 보낸 응답 내용을 로그의 결과 메시지로 쓰기 위해 reply를 감싼다.
-  let resultMessage = '';
-  const originalReply = interaction.reply.bind(interaction);
-  interaction.reply = (payload) => {
-    resultMessage = describeReply(payload);
-    return originalReply(payload);
-  };
-
-  let success = true;
-  try {
-    if (!interaction.inGuild()) {
-      throw new UserError('이 봇의 커맨드는 서버 채널에서만 사용할 수 있습니다.');
-    }
-    const guild = services.guilds.ensureGuild(interaction.guildId, interaction.guild?.name ?? null);
-    await command.execute(interaction, { services, guild });
-  } catch (err) {
-    success = false;
-    const isUserError = err instanceof UserError;
-    if (!isUserError) console.error(`/${interaction.commandName} 처리 중 오류:`, err);
-    const content = isUserError ? `⚠️ ${err.message}` : '❌ 요청을 처리하는 중 오류가 발생했습니다.';
-    resultMessage = isUserError ? content : `${content} (${err?.message ?? err})`;
-    const payload = { content, flags: MessageFlags.Ephemeral };
-    try {
-      if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
-      else await originalReply(payload);
-    } catch (replyErr) {
-      console.error('오류 응답 전송 실패:', replyErr);
-    }
-  }
-
-  // 서버별 커맨드 로그 (logs/<서버 ID>.log)
-  try {
-    await commandLogger.log({
-      discordGuildId: interaction.guildId,
-      command: describeCommand(interaction),
-      user: describeUser(interaction),
-      success,
-      message: resultMessage,
-    });
-  } catch (logErr) {
-    console.error('커맨드 로그 기록 실패:', logErr);
-  }
-});
+// 슬래시 커맨드(관리자 전용) + 버튼/선택 메뉴/입력창(모든 사용자)
+client.on(
+  Events.InteractionCreate,
+  createInteractionHandler({ services, commandMap, commandLogger, config, client }),
+);
 
 function shutdown() {
   client.destroy();

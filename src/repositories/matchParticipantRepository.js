@@ -21,7 +21,9 @@ function createMatchParticipantRepository(db) {
         FROM match_participant mp
         JOIN match m ON m.id = mp.match_id
        WHERE mp.guild_member_id = ? AND m.status IN ('RECRUITING', 'IN_PROGRESS')`),
-    insert: db.prepare('INSERT INTO match_participant (match_id, guild_member_id) VALUES (?, ?)'),
+    insert: db.prepare(
+      'INSERT INTO match_participant (match_id, guild_member_id, game_name) VALUES (?, ?, ?)',
+    ),
     delete: db.prepare('DELETE FROM match_participant WHERE id = ?'),
     updatePosition: db.prepare('UPDATE match_participant SET position = ? WHERE id = ?'),
     lockTeam: db.prepare('UPDATE match_participant SET team_id = ?, is_team_locked = 1 WHERE id = ?'),
@@ -32,13 +34,14 @@ function createMatchParticipantRepository(db) {
     resetShuffledByMatch: db.prepare(
       'UPDATE match_participant SET team_id = NULL WHERE match_id = ? AND is_team_locked = 0',
     ),
-    // 회원 1명의 전적 (종료된 대전 기준) - 승점 조회용
+    // 회원 1명의 전적 (종료된 대전의 판 기준) - 승점 조회용
     getStatsByMember: db.prepare(`
-      SELECT COUNT(m.id) AS games,
-             COUNT(r.id) AS wins
+      SELECT COUNT(r.id) AS games,
+             COUNT(w.record_id) AS wins
         FROM match_participant mp
         JOIN match m ON m.id = mp.match_id AND m.status = 'FINISHED'
-        LEFT JOIN match_record r ON r.match_id = mp.match_id AND r.winner_team_id = mp.team_id
+        JOIN match_record r ON r.match_id = m.id
+        LEFT JOIN match_record_winner w ON w.record_id = r.id AND w.guild_member_id = mp.guild_member_id
        WHERE mp.guild_member_id = ?`),
   };
 
@@ -51,8 +54,8 @@ function createMatchParticipantRepository(db) {
       stmts.findByMatchAndMember.get(matchId, guildMemberId) || null,
     /** 모집 중/진행 중인 대전에 참가한 기록 */
     findActiveByMember: (guildMemberId) => stmts.findActiveByMember.get(guildMemberId) || null,
-    insert: (matchId, guildMemberId) =>
-      Number(stmts.insert.run(matchId, guildMemberId).lastInsertRowid),
+    insert: (matchId, guildMemberId, gameName = null) =>
+      Number(stmts.insert.run(matchId, guildMemberId, gameName).lastInsertRowid),
     delete: (id) => stmts.delete.run(id),
     updatePosition: (id, position) => stmts.updatePosition.run(position, id),
     lockTeam: (id, teamId) => stmts.lockTeam.run(teamId, id),

@@ -61,7 +61,7 @@ function createAccountService(repos) {
   function getActiveMember(guildId, discordUserId) {
     const member = guildMembers.findByGuildAndDiscordUser(guildId, discordUserId);
     if (!member || member.status !== 'ACTIVE') {
-      throw new UserError('이 서버에 등록된 계정이 없습니다. 먼저 `/계정 등록`을 해 주세요.');
+      throw new UserError('이 서버에 등록된 계정이 없습니다. 먼저 [계정 등록] 버튼을 눌러 주세요.');
     }
     return member;
   }

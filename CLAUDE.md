@@ -31,10 +31,29 @@
 - 사용자별 승점을 조회할 수 있다.
 - **승점 규칙: 1승당 1점, 감점 없음** (서버별로 따로 계산)
 
+### 3. 버튼 기반 상호작용 (v2, 현재 기준)
+- 게임은 **리그 오브 레전드**. 사용자 설정 게임(내전)은 Riot API 전적에 남지 않으므로, **결과는 캡쳐 + 승리자 선택으로 직접 기록**한다.
+- **슬래시 커맨드는 서버 관리자(Administrator 권한) 전용**이다. 일반 사용자는 버튼으로만 이용한다.
+- **모든 응답은 기본적으로 본인만 볼 수 있다(ephemeral).** 모두에게 보이는 메시지는 아래 3가지뿐이다.
+  - `/대전 관리` 버튼 패널
+  - 대전 정보 메시지 (대전 등록 시 채널에 올라감, 상태/참가자 수 자동 갱신)
+  - 대전 종료 알림 (판별 결과, 이번 대전 승점, 결과 캡쳐)
+- 흐름: 관리자 `/대전 관리` → 패널 [대전 등록] / [진행중인 대전 조회] / [계정 등록] / [계정 탈퇴]
+  - **대전 등록**: 판 수 선택 메뉴(1~10판) → 롤 아이디 입력 → 대전 생성 + 등록자 자동 참가 → 대전 정보 메시지(공개) + 등록자에게 관리 패널(본인만)
+  - **대전 정보 메시지 버튼**: [대전 참가](롤 아이디 입력) · [대전 탈퇴] · [대전 조회](참가자/포지션/아이디) · [포지션 등록/변경] · [대전 관리]
+  - **관리 패널**: [대전 시작](10명 필수) · [대전 기록](결과 캡쳐 1장 + 이긴 사람 5명) · [대전 종료](종료 알림 공개) · [대전 취소]
+- 승점 조회/랭킹, 팀 관리(팀 등록/탈퇴/셔플)의 버튼화는 **이후 작업**. 지금은 관리자 커맨드로만 남아 있다.
+
 ### 확정된 운영 규칙
 - **서버당 진행 중인 대전은 1개만** 허용한다. (`RECRUITING`/`IN_PROGRESS` 상태는 서버당 1개, DB의 부분 UNIQUE 인덱스로도 보장)
 - 대전 상태 흐름: `RECRUITING`(모집 중) → `IN_PROGRESS`(진행 중) → `FINISHED`(종료), 언제든 `CANCELED`(취소) 가능
-- 대전 시작·결과 기록·취소는 **대전을 만든 사람 또는 서버 관리자(서버 관리 권한)**만 할 수 있다.
+- 대전 하나에 **1~10판**. 판 수는 대전 등록 시 정하며, 등록한 판 수까지만 기록할 수 있다. 덜 기록하고 종료해도 된다.
+- **대전 시작은 참가자 10명이 모두 모여야** 한다. (팀 구성은 필요 없음) 시작 후에는 참가/탈퇴/포지션 변경 불가.
+- 대전 시작·기록·종료·취소는 **서버 관리자 또는 대전 등록자**만 할 수 있다. 그 외에는 "권한 없음".
+- 대전 참가 시 **롤 아이디(`게임이름#태그`) 입력 필수**. 마지막으로 입력한 아이디는 다음 입력창의 기본값이 된다.
+- 포지션은 **대전마다 따로** 등록한다.
+- **승점 = 판 1승당 1점, 감점 없음.** 종료(`FINISHED`)된 대전의 기록만 반영, 서버별로 계산.
+- 계정 탈퇴는 soft delete (기록 보존, 재등록 시 이어짐).
 - 참가자 변경(대전 참가/탈퇴, 팀 등록/탈퇴)이 생기면 기존 셔플 결과(직접 등록자 제외)는 초기화되므로 다시 셔플해야 한다.
 
 ## 기술 스택
@@ -56,7 +75,7 @@
 - **서버 ↔ 대전 = 1:N**: 대전은 반드시 하나의 서버에 속하고, 서버마다 대전을 여러 개 만들 수 있다.
 - 대전마다 팀은 **2개**, 기본값은 **레드팀(RED) / 블루팀(BLUE)** (`UNIQUE(match_id, side)`)
 - **대전 ↔ 서버회원 = N:M**이므로 **대전참가자(match_participant)**로 풀어낸다. 참가자는 `guild_member`를 참조하므로 **해당 서버에 가입한 사람만** 대전에 참가할 수 있다.
-- 대전기록은 현재 대전과 **1:1** (`match_record.match_id` UNIQUE). 이후 요구사항이 바뀌면 **1:n**으로 확장 (UNIQUE 제약만 제거)
+- **대전 ↔ 대전기록 = 1:N** (판별 기록, `UNIQUE(match_id, game_no)`). 판마다 결과 캡쳐와 **승리자 5명(match_record_winner)**을 저장한다. 팀 기능 없이도 개인 승점을 계산할 수 있도록 승리자를 사람 단위로 남긴다.
 
 ### ERD
 
@@ -69,8 +88,10 @@ erDiagram
     MATCH        ||--o{ MATCH_PARTICIPANT : "참가자 (최대 10명)"
     MATCH        ||--|{ TEAM              : "보유 (정확히 2개)"
     TEAM         ||--o{ MATCH_PARTICIPANT : "소속 (최대 5명)"
-    MATCH        ||--o| MATCH_RECORD      : "기록 (현재 1:1 → 추후 1:n)"
-    TEAM         ||--o{ MATCH_RECORD      : "승리팀"
+    MATCH        ||--o{ MATCH_RECORD      : "판별 기록 (1:N, 최대 game_count판)"
+    MATCH_RECORD ||--|{ MATCH_RECORD_WINNER : "승리자 (5명)"
+    GUILD_MEMBER ||--o{ MATCH_RECORD_WINNER : "승리 (1명당 승점 1점)"
+    TEAM         |o--o{ MATCH_RECORD      : "승리팀 (팀 기준 기록 시)"
 
     GUILD {
         INTEGER id PK
@@ -85,6 +106,7 @@ erDiagram
         INTEGER id PK
         TEXT    discord_user_id UK "디스코드 사용자 ID (사용자당 1계정)"
         TEXT    username
+        TEXT    last_game_name "마지막 입력 롤 아이디 (입력창 기본값)"
         TEXT    created_at
     }
 
@@ -103,8 +125,11 @@ erDiagram
         INTEGER guild_id FK
         TEXT    channel_id "디스코드 채널 ID"
         TEXT    status "RECRUITING | IN_PROGRESS | FINISHED | CANCELED"
-        INTEGER created_by FK "guild_member.id"
+        INTEGER created_by FK "guild_member.id (대전 등록자)"
         TEXT    created_at
+        INTEGER game_count "진행할 판 수 1~10"
+        TEXT    message_channel_id "공개 대전 정보 메시지 채널"
+        TEXT    message_id "공개 대전 정보 메시지"
     }
 
     TEAM {
@@ -121,13 +146,22 @@ erDiagram
         TEXT    position "TOP | MID | JUNGLE | ADC | SUPPORT (nullable)"
         INTEGER is_team_locked "1 = 팀 직접 등록 → 셔플 제외"
         TEXT    joined_at
+        TEXT    game_name "이번 대전 롤 아이디 (게임이름#태그)"
     }
 
     MATCH_RECORD {
         INTEGER id PK
-        INTEGER match_id       FK "현재 UNIQUE (1:1)"
-        INTEGER winner_team_id FK "team.id"
+        INTEGER match_id        FK "UNIQUE: match_id + game_no"
+        INTEGER game_no         "몇 번째 판 (1부터)"
+        INTEGER winner_team_id  FK "nullable - 팀 기준 기록 시만"
+        TEXT    screenshot_path "결과 캡쳐 파일 경로"
+        INTEGER recorded_by     FK "guild_member.id"
         TEXT    played_at
+    }
+
+    MATCH_RECORD_WINNER {
+        INTEGER record_id       PK, FK
+        INTEGER guild_member_id PK, FK
     }
 ```
 
@@ -138,63 +172,81 @@ erDiagram
 | `guild` | 봇이 참가한 디스코드 서버 | `discord_guild_id` UNIQUE. 봇이 서버에 들어올 때(`guildCreate` 이벤트) 자동 생성하고, 나갈 때(`guildDelete`) `status = LEFT`로 바꾼다 |
 | `account` | 디스코드 사용자 (전역) | `discord_user_id` UNIQUE. 사용자당 1개 |
 | `guild_member` | 서버별 가입 정보 (계정 등록/탈퇴) | `UNIQUE(guild_id, account_id)`. 탈퇴하면 `status = WITHDRAWN`으로 바꾸는 soft delete (기록 보존용). 다시 가입하면 같은 행을 `ACTIVE`로 되돌린다 |
-| `match` | 대전 1건 | `guild_id` NOT NULL. `status`로 모집 → 진행 → 종료 상태를 관리 |
+| `match` | 대전 1건 | `guild_id` NOT NULL. `status`로 모집 → 진행 → 종료 상태를 관리. `game_count` 1~10, 공개 메시지 위치 저장 |
 | `team` | 대전의 팀 (RED/BLUE) | 대전을 만들 때 2개를 자동 생성. `UNIQUE(match_id, side)`, `side IN ('RED','BLUE')` |
 | `match_participant` | 대전 참가자 (대전 등록/탈퇴, 포지션 선택, 팀 등록/탈퇴) | `UNIQUE(match_id, guild_member_id)`. 대전당 10명, 팀당 5명 제한, 참가자가 대전과 같은 서버 회원인지는 애플리케이션에서 검증 |
-| `match_record` | 대전 결과 | 현재 `match_id` UNIQUE (1:1) |
+| `match_record` | 판별 기록 (결과 캡쳐) | `UNIQUE(match_id, game_no)`. `game_no`는 1부터 `match.game_count`까지 |
+| `match_record_winner` | 판별 승리자 | PK `(record_id, guild_member_id)`. 판마다 5명. 1행 = 승점 1점 |
 
 ### 기능 ↔ 테이블 매핑
 
 - **봇 서버 참가 / 퇴장** → `guild` INSERT(또는 `ACTIVE`로 복구) / `status = LEFT`
 - **계정 등록** → `account`가 없으면 INSERT → `guild_member` INSERT(또는 `ACTIVE`로 복구)
 - **계정 탈퇴** → 해당 서버의 `guild_member.status = WITHDRAWN` (다른 서버 가입에는 영향 없음)
-- **대전 등록 / 탈퇴** → `match_participant` INSERT / DELETE (`ACTIVE` 상태의 guild_member만 가능)
+- **대전 등록(생성)** → `match` INSERT(`game_count`) + `team` 2개 + 등록자 `match_participant` INSERT → 공개 메시지 위치 `match.message_*` UPDATE
+- **대전 참가 / 탈퇴** → `match_participant` INSERT(`game_name`) / DELETE (`ACTIVE` 상태의 guild_member만 가능), `account.last_game_name` UPDATE
 - **포지션 선택** → `match_participant.position` UPDATE
 - **팀 등록 / 탈퇴** → `match_participant.team_id` 설정 + `is_team_locked = 1` / `team_id = NULL` + `is_team_locked = 0`
 - **팀 자동셔플** → 참가자가 10명인지 확인 → `is_team_locked = 0`인 참가자만 대상으로, 포지션이 겹치지 않도록 우선 배치한 뒤 나머지를 랜덤으로 `team_id` 배정
-- **개인별 승점 조회** → `guild_member` 기준으로 `match_participant.team_id`와 `match_record.winner_team_id`를 JOIN해서 **서버별로** 계산 (승점 규칙은 추후 확정)
+- **대전 기록** → `match_record` INSERT(`game_no`, 캡쳐 경로) + `match_record_winner` 5행 INSERT
+- **대전 시작 / 종료 / 취소** → `match.status` UPDATE (`IN_PROGRESS` / `FINISHED` / `CANCELED`)
+- **개인별 승점 조회** → 종료된 대전의 `match_record` 수 = 판 수(전적), `match_record_winner` 수 = 승리 수 = 승점. **서버별로** 계산
 
 ### 구현 시 주의
 
 - 모든 조회와 변경은 **현재 커맨드가 들어온 서버(guild) 범위**로 한정한다. 다른 서버의 데이터가 섞이지 않도록 서비스 계층에서 `guild_id` 조건을 강제한다.
 
-### 확장 메모 (대전기록 1:n 전환 시)
+### 마이그레이션 (`src/db/migrations.js`)
 
-- `match_record.match_id`의 UNIQUE 제약을 제거한다.
-- 판마다 팀 구성이 바뀔 수 있다면, 판별 팀 배정을 저장하는 `record_participant(record_id, guild_member_id, team_id, position)` 테이블을 추가하는 방안을 검토한다.
+- `PRAGMA user_version`으로 스키마 버전을 관리한다. 새 DB는 `schema.sql`(최신 모양)로 만들고, 기존 DB는 버전별 마이그레이션을 순서대로 적용한다.
+- **v2**: 대전기록 1:1 → 1:N 전환, `match_record_winner` 추가, 판 수·공개 메시지·롤 아이디 컬럼 추가. 기존 기록은 1판으로 옮기고 승리팀 인원을 승리자로 옮겨 **기존 승점을 유지**한다.
+- 스키마를 바꿀 때는 `schema.sql`(최신 모양)과 새 마이그레이션 버전을 **함께** 추가한다.
 
-## 슬래시 커맨드
+## 버튼 / 선택 메뉴 / 입력창 (`src/interactions/`)
 
-| 커맨드 | 설명 | 비고 |
-|---|---|---|
-| `/계정 등록` | 이 서버에 계정 등록 | 탈퇴했다가 다시 등록하면 이전 기록이 이어짐 |
-| `/계정 탈퇴` | 이 서버에서 계정 탈퇴 | 모집 중인 대전에 참가 중이면 대전에서도 빠짐. 진행 중인 대전 참가자는 탈퇴 불가 |
-| `/대전 생성` | 새 대전 열기 | 서버당 1개 |
-| `/대전 참가` | 이번 대전 참가 | **[자동]** 대전이 없으면 새로 만듦. **[자동]** 10명이 모이면 셔플 안내 |
-| `/대전 탈퇴` | 대전 참가 철회 | 모집 중일 때만 |
-| `/대전 포지션 <포지션>` | 탑/정글/미드/원딜/서폿 선택 또는 해제 | |
-| `/대전 참가자` | 참가자 목록 보기 (참가 순서, 포지션, 팀) | `/대전 참가` 응답에도 목록 표시 |
-| `/대전 현황` | 현재 대전 참가자와 팀 구성 보기 | |
-| `/대전 시작` | 10명, 5:5 구성이 끝난 대전 시작 | 대전 생성자/서버 관리자 |
-| `/대전 결과 <승리팀>` | 결과 기록, 승리팀 전원 승점 +1 | 대전 생성자/서버 관리자 |
-| `/대전 취소` | 대전 취소 | 대전 생성자/서버 관리자 |
-| `/팀 등록 <레드팀/블루팀>` | 원하는 팀 직접 선택 (셔플 제외) | 팀당 최대 5명 |
-| `/팀 탈퇴` | 팀에서 빠지기 (다시 셔플 대상) | |
-| `/팀 셔플` | 10명일 때 팀 자동 배정 | 포지션 겹침이 가장 적은 배치 중 랜덤 |
-| `/승점 조회 [사용자]` | 개인 승점, 전적 조회 | |
-| `/승점 랭킹` | 서버 승점 TOP 10 | |
+customId 규칙: `<action>|<인자...>` (`src/interactions/ids.js`). 대전 관련 버튼에는 대전 ID를 넣어 끝난 대전의 옛 버튼을 막는다.
 
-자동 처리 이벤트: 봇이 켜질 때 참가 중인 서버를 동기화하고, 서버에 들어오거나 나갈 때 `guild` 상태를 갱신한다.
+| 위치 | 컴포넌트 | 동작 | 권한 | 응답 |
+|---|---|---|---|---|
+| 패널 | [대전 등록] → 판 수 선택 메뉴 → 롤 아이디 입력창 | 대전 생성 + 자동 참가, 공개 대전 정보 메시지 게시 | 계정 등록자 | 관리 패널(본인) |
+| 패널 | [진행중인 대전 조회] | 대전 현황 + 참가 버튼 + 메시지 링크 | 누구나 | 본인 |
+| 패널 | [계정 등록] / [계정 탈퇴] | 서버 회원 등록 / 탈퇴 | 누구나 | 본인 |
+| 대전 정보 | [대전 참가] → 롤 아이디 입력창 | 참가 (10명 제한) | 계정 등록자 | 본인 |
+| 대전 정보 | [대전 탈퇴] | 참가 철회 | 참가자 | 본인 |
+| 대전 정보 | [대전 조회] | 참가자 · 포지션 · 롤 아이디 · 기록 현황 | 누구나 | 본인 |
+| 대전 정보 | [포지션 등록/변경] → 포지션 선택 메뉴 | 이번 대전 포지션 | 참가자 | 본인 |
+| 대전 정보 | [대전 관리] | 관리 패널 열기 | 관리자 / 등록자 (그 외 "권한 없음") | 본인 |
+| 관리 패널 | [대전 시작] | 10명일 때 진행 중으로 | 관리자 / 등록자 | 본인 (패널 갱신) |
+| 관리 패널 | [대전 기록] → 입력창(캡쳐 업로드 + 승리자 5명 선택) | 판별 기록, 캡쳐는 `RECORDS_DIR`에 저장 | 관리자 / 등록자 | 본인 |
+| 관리 패널 | [대전 종료] | 종료 + **공개 종료 알림**(판별 결과, 승점, 캡쳐 첨부) | 관리자 / 등록자 | 본인 + 공개 |
+| 관리 패널 | [대전 취소] | 취소 (승점 미반영) | 관리자 / 등록자 | 본인 |
 
-## 커맨드 로그 (`src/utils/commandLogger.js`)
+자동 처리: 봇이 켜질 때 참가 중인 서버를 동기화하고, 서버에 들어오거나 나갈 때 `guild` 상태를 갱신한다. 참가/탈퇴/시작/기록/종료 때마다 공개 대전 정보 메시지를 다시 그린다.
 
-- 모든 슬래시 커맨드 실행을 **서버별 텍스트 파일**에 한 줄씩 남긴다: `logs/<디스코드 서버 ID>.log` (서버 밖 DM은 `logs/direct-message.log`)
+## 슬래시 커맨드 (관리자 전용)
+
+모든 커맨드에 `default_member_permissions = Administrator`를 걸고, 실행 시에도 관리자 권한을 다시 확인한다. 응답은 `/대전 관리`를 빼고 모두 본인만 볼 수 있다.
+
+| 커맨드 | 설명 |
+|---|---|
+| `/대전 관리` | 이 채널에 버튼 패널 게시 (공개) |
+| `/대전 참가 [아이디]` · `/대전 탈퇴` · `/대전 포지션` | 관리자 본인의 참가/탈퇴/포지션 |
+| `/대전 참가자` · `/대전 현황` | 참가자 목록, 팀 구성 + 판별 기록 |
+| `/대전 시작` · `/대전 종료` · `/대전 취소` | 관리 패널과 동일 |
+| `/대전 결과 <승리팀>` | 팀 구성이 끝난 경우 팀 기준으로 다음 판 기록 (승리팀 5명) |
+| `/계정 등록` · `/계정 탈퇴` | 관리자 본인 계정 |
+| `/팀 등록` · `/팀 탈퇴` · `/팀 셔플` | 팀 관리 (버튼화 예정) |
+| `/승점 조회 [사용자]` · `/승점 랭킹` | 승점 (버튼화 예정) |
+
+## 로그 (`src/utils/commandLogger.js`)
+
+- 모든 슬래시 커맨드와 버튼/선택 메뉴/입력창 실행을 **서버별 텍스트 파일**에 한 줄씩 남긴다: `logs/<디스코드 서버 ID>.log` (서버 밖 DM은 `logs/direct-message.log`)
 - 형식: `[등록날짜] 등록 커맨드 | 등록자 | 성공/실패 | 결과 메시지`
   ```
   [2026-11-20 15:30:12] /대전 포지션 포지션:MID | 홍길동 (hong, 123456789) | 성공 | 🎯 <@123456789> 님의 포지션: **미드**
   ```
   - 등록날짜: `LOG_TIMEZONE` 기준 (기본 Asia/Seoul)
-  - 등록 커맨드: 서브커맨드와 옵션까지 포함
+  - 등록 커맨드: 서브커맨드와 옵션까지 포함. 버튼은 `[버튼] 대전 참가`, 선택은 `[선택] 포지션 선택: MID`, 입력은 `[입력] 대전 참가 - 롤 아이디 입력: Hide on bush#KR1`
   - 등록자: 서버 표시 이름 (사용자명, 디스코드 ID)
   - 결과 메시지: 봇이 보낸 응답 (임베드는 `[임베드] 제목 설명`으로 요약, 줄바꿈은 ` / `로 치환)
 - 로그 기록에 실패해도 커맨드 처리에는 영향을 주지 않는다. 로그 폴더는 `LOG_DIR`로 바꿀 수 있고 git에는 올리지 않는다.
@@ -214,8 +266,9 @@ src/
   deploy-commands.js    # 슬래시 커맨드 등록 스크립트
   config.js             # 환경 변수 (.env)
   constants.js          # 인원, 포지션, 팀, 상태, 승점 상수
-  db/schema.sql         # SQLite 스키마
-  db/index.js           # DB 열기 + 스키마 적용
+  db/schema.sql         # SQLite 스키마 (최신 모양)
+  db/migrations.js      # 기존 DB 마이그레이션 (PRAGMA user_version)
+  db/index.js           # DB 열기 + 스키마/마이그레이션 적용
   repositories/         # 테이블별 쿼리 (SQL은 이 폴더에만 둔다)
     index.js            # createRepositories(db) + transaction(fn)
     guildRepository.js              # guild
@@ -224,7 +277,8 @@ src/
     matchRepository.js              # match
     teamRepository.js               # team
     matchParticipantRepository.js   # match_participant (+ 개인 전적)
-    matchRecordRepository.js        # match_record
+    matchRecordRepository.js        # match_record (판별 기록)
+    matchRecordWinnerRepository.js  # match_record_winner (판별 승리자)
   services/             # 비즈니스 로직 (Repository만 호출, 디스코드와 독립, 테스트 대상)
     guildService.js     # 서버 등록/퇴장
     accountService.js   # 계정관리 (등록/탈퇴)
@@ -232,19 +286,28 @@ src/
     teamService.js      # 대전관리 - 팀 관리
     shuffle.js          # 팀 자동셔플 알고리즘 (순수 함수)
     pointService.js     # 대전관리 - 승점 조회
-  commands/             # 슬래시 커맨드 정의 + 응답 (계정/대전/팀/승점)
-  utils/                # UserError, Embed 포맷, 커맨드 로그
-logs/                   # 서버별 커맨드 로그 (<서버 ID>.log, git 제외)
+  interactions/         # 버튼/선택 메뉴/입력창
+    router.js           # InteractionCreate 처리 (권한, 나만 보기 기본값, 오류 응답, 로그)
+    handlers.js         # customId action별 처리
+    views.js            # 패널, 대전 정보 메시지, 관리 패널, 입력창, 종료 알림 화면
+    matchMessage.js     # 공개 대전 정보 메시지 게시/갱신, 종료 알림 게시
+    ids.js              # customId 규칙 + 로그용 이름
+  commands/             # 슬래시 커맨드 정의 + 응답 (관리자 전용)
+  utils/                # UserError, Embed 포맷, 로그, 결과 캡쳐 저장
+data/                   # bot.sqlite, records/<서버 ID>/ 결과 캡쳐 (git 제외)
+logs/                   # 서버별 로그 (<서버 ID>.log, git 제외)
 test/                   # node:test 기반 테스트 (npm test)
 ```
 
 ## 개발 규칙
 
-- 계층 구조: `commands/` → `services/` → `repositories/` → DB
-  - `commands/`: 입력 파싱과 응답 표시만 담당한다.
+- 계층 구조: `commands/`, `interactions/` → `services/` → `repositories/` → DB
+  - `commands/`, `interactions/`: 입력 파싱과 응답 표시만 담당한다.
   - `services/`: 비즈니스 로직. **DB에 직접 쿼리하지 않고 Repository만 호출한다.**
   - `repositories/`: **테이블별 파일**(`<테이블>Repository.js`)에 SQL을 둔다. 여러 테이블을 JOIN하는 조회는 결과의 기준이 되는 테이블의 Repository에 둔다.
-- 사용자에게 보여줄 오류는 `UserError`로 던진다. 커맨드 처리기에서 본인에게만 보이는(ephemeral) 메시지로 표시한다.
+- 사용자에게 보여줄 오류는 `UserError`로 던진다. 처리기(`router.js`)에서 본인에게만 보이는(ephemeral) 메시지로 표시한다.
+- 응답은 `interaction.reply(...)`를 그대로 쓰면 자동으로 본인만 보기가 된다. 모두에게 보여야 하면 payload에 `public: true`를 넣거나 `channel.send`를 쓴다. (요건에 "모두 볼 수 있다"가 있을 때만)
+- 버튼/입력창 customId는 `ids.js`의 `ACTIONS` + `buildId`로만 만들고, 대전 관련 버튼에는 대전 ID를 넣는다.
 - 상태를 바꾸는 서비스 함수는 `repos.transaction(fn)`으로 감싼다.
 - 모든 조회와 변경은 현재 서버(`guild.id`) 범위로 한정한다.
 - 변경 후 `npm test`로 테스트를 확인한다.

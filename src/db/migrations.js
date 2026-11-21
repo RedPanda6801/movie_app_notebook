@@ -1,0 +1,91 @@
+/**
+ * 기존 DB 파일을 최신 스키마로 올리는 마이그레이션.
+ * PRAGMA user_version에 적용된 버전을 기록한다.
+ *
+ * - 새 DB: schema.sql(최신 모양)로 만들고 user_version = LATEST_VERSION
+ * - 기존 DB: user_version보다 큰 버전의 마이그레이션만 순서대로 적용
+ */
+const MIGRATIONS = [
+  {
+    // v1 -> v2: 대전에 판 수/공개 메시지 추가, 판별 기록(1:N) + 판별 승리자
+    version: 2,
+    up(db) {
+      db.exec(`
+        ALTER TABLE account ADD COLUMN last_game_name TEXT;
+        ALTER TABLE match ADD COLUMN game_count INTEGER NOT NULL DEFAULT 1 CHECK (game_count BETWEEN 1 AND 10);
+        ALTER TABLE match ADD COLUMN message_channel_id TEXT;
+        ALTER TABLE match ADD COLUMN message_id TEXT;
+        ALTER TABLE match_participant ADD COLUMN game_name TEXT;
+
+        CREATE TABLE match_record_v2 (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id        INTEGER NOT NULL REFERENCES match (id),
+            game_no         INTEGER NOT NULL,
+            winner_team_id  INTEGER REFERENCES team (id),
+            screenshot_path TEXT,
+            recorded_by     INTEGER REFERENCES guild_member (id),
+            played_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (match_id, game_no)
+        );
+        INSERT INTO match_record_v2 (id, match_id, game_no, winner_team_id, played_at)
+             SELECT id, match_id, 1, winner_team_id, played_at FROM match_record;
+        DROP TABLE match_record;
+        ALTER TABLE match_record_v2 RENAME TO match_record;
+
+        CREATE TABLE match_record_winner (
+            record_id       INTEGER NOT NULL REFERENCES match_record (id) ON DELETE CASCADE,
+            guild_member_id INTEGER NOT NULL REFERENCES guild_member (id),
+            PRIMARY KEY (record_id, guild_member_id)
+        );
+        -- 기존 기록(팀 기준 1판)의 승리팀 인원을 승리자로 옮긴다. (기존 승점 유지)
+        INSERT INTO match_record_winner (record_id, guild_member_id)
+             SELECT r.id, mp.guild_member_id
+               FROM match_record r
+               JOIN match_participant mp ON mp.match_id = r.match_id AND mp.team_id = r.winner_team_id;
+        CREATE INDEX IF NOT EXISTS ix_record_winner_member ON match_record_winner (guild_member_id);
+      `);
+    },
+  },
+];
+
+const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));
+
+function tableExists(db, name) {
+  return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+}
+
+/**
+ * @param {import('better-sqlite3').Database} db
+ * @param {string} schemaSql 최신 스키마 SQL
+ */
+function migrate(db, schemaSql) {
+  const isNew = !tableExists(db, 'guild');
+  if (isNew) {
+    db.exec(schemaSql);
+    db.pragma(`user_version = ${LATEST_VERSION}`);
+    return;
+  }
+
+  let current = db.pragma('user_version', { simple: true }) || 1;
+  const pending = MIGRATIONS.filter((m) => m.version > current).sort((a, b) => a.version - b.version);
+  if (pending.length > 0) {
+    // 테이블 재생성 중 외래키 검사를 잠시 끈다. (트랜잭션 밖에서만 바꿀 수 있음)
+    db.pragma('foreign_keys = OFF');
+    try {
+      for (const m of pending) {
+        db.transaction(() => {
+          m.up(db);
+          db.pragma(`user_version = ${m.version}`);
+        })();
+        current = m.version;
+        console.log(`DB 마이그레이션 적용: v${m.version}`);
+      }
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
+  // 새로 추가된 인덱스 등 IF NOT EXISTS 구문을 보충한다.
+  db.exec(schemaSql);
+}
+
+module.exports = { migrate, LATEST_VERSION, MIGRATIONS };

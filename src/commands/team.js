@@ -7,7 +7,7 @@ const sideChoices = Object.entries(SIDE_LABELS).map(([value, name]) => ({ name, 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('팀')
-    .setDescription('대전관리 - 팀 관리')
+    .setDescription('대전관리 - 팀 관리 (관리자 전용)')
     .addSubcommand((s) =>
       s
         .setName('등록')
@@ -39,7 +39,7 @@ module.exports = {
     if (sub === '셔플') {
       const view = services.teams.shuffle(base);
       return interaction.reply({
-        content: '🎲 팀 셔플 완료! 준비되면 `/대전 시작`을 입력해 주세요.',
+        content: '🎲 팀 셔플 완료!',
         embeds: [matchEmbed(view, `대전 #${view.match.id} 팀 구성`)],
       });
     }

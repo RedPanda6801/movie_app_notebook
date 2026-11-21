@@ -26,7 +26,11 @@ const MATCH_STATUS_LABELS = {
   CANCELED: '취소',
 };
 
-/** 승리 1회당 승점 (감점 없음) */
+/** 대전 1개에서 진행할 수 있는 판 수 */
+const MIN_GAMES = 1;
+const MAX_GAMES = 10;
+
+/** 판 1번 승리당 승점 (감점 없음) */
 const POINTS_PER_WIN = 1;
 
 module.exports = {
@@ -38,5 +42,7 @@ module.exports = {
   SIDE_LABELS,
   MATCH_STATUS,
   MATCH_STATUS_LABELS,
+  MIN_GAMES,
+  MAX_GAMES,
   POINTS_PER_WIN,
 };
