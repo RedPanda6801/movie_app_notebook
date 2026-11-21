@@ -131,23 +131,44 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'command', user: 'admin', admin: true, command: '계정', sub: '관리' });
   assert.ok(!isEphemeral(calls[0].payload), '계정 패널은 모두에게 보여야 한다');
   const accountButtons = calls[0].payload.components[0].toJSON().components.map((c) => c.label);
-  assert.deepEqual(accountButtons, ['계정 등록', '계정 탈퇴']);
+  assert.deepEqual(accountButtons, ['계정 등록', '아이디 변경', '선호 포지션', '계정 탈퇴']);
   calls = await send({ kind: 'command', user: 'u1', command: '계정', sub: '관리' });
   assert.match(textOf(calls[0].payload), /권한이 없습니다/);
 
-  // 계정 등록 (본인만 보임)
+  // 계정 등록: 버튼 → 롤 아이디 입력창 (계정당 1개, 본인만 보임)
   for (const u of users) {
     calls = await send({ kind: 'button', user: u, customId: 'panel.register' });
+    assert.equal(calls[0].type, 'showModal');
+    calls = await send({ kind: 'modal', user: u, customId: 'account.registerModal', fields: { gameName: `lol${u}#KR1` } });
     assert.match(textOf(calls[0].payload), /계정이 등록되었습니다/);
+    assert.match(textOf(calls[0].payload), new RegExp(`lol${u}#KR1`));
     assert.ok(isEphemeral(calls[0].payload));
   }
+  // 다른 사람이 등록한 아이디는 쓸 수 없다
+  calls = await send({ kind: 'button', user: 'u11', customId: 'panel.register' });
+  calls = await send({ kind: 'modal', user: 'u11', customId: 'account.registerModal', fields: { gameName: 'LOLU1#kr1' } });
+  assert.match(textOf(calls[0].payload), /이미 다른 계정이 등록한 롤 아이디/);
+  // 이미 등록한 계정은 [아이디 변경]으로
+  calls = await send({ kind: 'button', user: 'u1', customId: 'panel.register' });
+  assert.match(textOf(calls[0].payload), /\[아이디 변경\]/);
+  calls = await send({ kind: 'button', user: 'u1', customId: 'account.changeId' });
+  assert.equal(calls[0].payload.toJSON().components[0].component.value, 'lolu1#KR1', '현재 아이디가 채워져 있다');
 
-  // 대전 등록: 버튼 → 판 수 선택 → 롤 아이디 입력
+  // 선호 포지션: u3은 원딜
+  calls = await send({ kind: 'button', user: 'u3', customId: 'account.position' });
+  assert.ok(isEphemeral(calls[0].payload));
+  calls = await send({ kind: 'select', user: 'u3', customId: 'account.positionSelect', values: ['ADC'] });
+  assert.match(textOf(calls[0].payload), /선호 포지션: \*\*원딜\*\*/);
+
+  // 대전 등록: 버튼 → 판 수 선택 → 포지션 입력창 (롤 아이디는 입력하지 않음)
   calls = await send({ kind: 'button', user: 'u1', customId: 'panel.create' });
   assert.ok(isEphemeral(calls[0].payload));
   calls = await send({ kind: 'select', user: 'u1', customId: 'create.games', values: ['2'] });
   assert.equal(calls[0].type, 'showModal');
-  calls = await send({ kind: 'modal', user: 'u1', customId: 'create.modal|2', fields: { gameName: 'lolu1#KR1' } });
+  const createModal = calls[0].payload.toJSON();
+  assert.equal(createModal.components.length, 1, '포지션만 고른다');
+  assert.equal(createModal.components[0].component.custom_id, 'position');
+  calls = await send({ kind: 'modal', user: 'u1', customId: 'create.modal|2', fields: { position: ['MID'] } });
   assert.equal(calls[0].type, 'deferReply', '공개 메시지 게시 전에 먼저 응답을 예약한다 (3초 제한)');
   assert.ok(isEphemeral(calls[0].payload), '등록자 관리 패널은 본인만');
   assert.match(textOf(calls[1].payload), /대전 #1\*\*\(2판\)이 등록되었고/);
@@ -159,28 +180,24 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'button', user: 'u2', customId: 'panel.create' });
   assert.match(textOf(calls[0].payload), /하나만/);
 
-  // 참가 입력창에서 포지션을 미리 고를 수 있다 (기본값 미정)
+  // 참가 입력창: 포지션만 고르고, 기본값은 선호 포지션 (u3 = 원딜, 나머지 = 미정)
   calls = await send({ kind: 'button', user: 'u3', customId: 'match.join|1' });
   const joinModal = calls[0].payload.toJSON();
-  assert.equal(joinModal.components[1].component.custom_id, 'position');
-  assert.equal(joinModal.components[1].component.options.find((o) => o.default)?.label, '미정');
+  assert.equal(joinModal.components.length, 1, '롤 아이디 입력 없이 포지션만');
+  assert.equal(joinModal.components[0].component.options.find((o) => o.default)?.label, '원딜');
+  calls = await send({ kind: 'button', user: 'u4', customId: 'match.join|1' });
+  assert.equal(calls[0].payload.toJSON().components[0].component.options.find((o) => o.default)?.label, '미정');
 
-  // 롤 아이디를 잘못 입력하면 본인에게 형식 안내 (참가되지 않음)
-  calls = await send({ kind: 'modal', user: 'u2', customId: 'match.joinModal|1', fields: { gameName: '드므드므드#KR!' } });
-  assert.equal(calls[0].type, 'reply');
-  assert.ok(isEphemeral(calls[0].payload));
-  assert.match(textOf(calls[0].payload), /⚠️ 롤 아이디는 `게임이름#태그` 형식/);
-  assert.equal(services.matches.getMatchView(1).participants.length, 1);
-
-  // 나머지 9명 참가 (버튼 → 아이디 입력창)
+  // 나머지 9명 참가 (버튼 → 포지션 입력창, 기본값 그대로 제출)
   for (const u of users.slice(1)) {
     calls = await send({ kind: 'button', user: u, customId: 'match.join|1' });
     assert.equal(calls[0].type, 'showModal');
+    const defaultPosition = calls[0].payload.toJSON().components[0].component.options.find((o) => o.default).value;
     calls = await send({
       kind: 'modal',
       user: u,
       customId: 'match.joinModal|1',
-      fields: { gameName: `lol${u}#KR1`, position: [u === 'u3' ? 'ADC' : 'NONE'] },
+      fields: { position: [defaultPosition] },
     });
     assert.equal(calls[0].type, 'reply', '공개 메시지 갱신보다 응답이 먼저다 (3초 제한)');
     assert.match(textOf(calls[0].payload), /참가했습니다/);
@@ -293,6 +310,12 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   const saved = path.join(tmp, 'records', 'guild-1', 'match-1-game-1.png');
   assert.ok(fs.existsSync(saved), '캡쳐가 저장되어야 한다');
 
+  // 피어리스: 공개 대전 정보 메시지에 이전 판 챔피언 + 사용한 챔피언 목록
+  const publicText = JSON.stringify(matchMessage.payload.embeds[0].toJSON());
+  assert.match(publicText, /\(제라스\)/);
+  assert.match(publicText, /🚫 피어리스 - 사용한 챔피언 \(10\)/);
+  assert.match(publicText, /\*\*1판\*\* .*제라스/);
+
   // 피어리스: 진행 중 [대전 조회]에서 아이디(챔피언) 표시
   calls = await send({ kind: 'button', user: 'u9', customId: 'match.view|1' });
   assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /🎮 lolu\d+#KR1\(제라스\)/);
@@ -387,6 +410,7 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   // 서버별 로그
   const log = fs.readFileSync(path.join(tmp, 'logs', 'guild-1.log'), 'utf8');
   assert.match(log, /\[버튼\] 대전 참가 \| u2님 \(u2, u2\) \| 성공/);
-  assert.match(log, /\[입력\] 대전 참가 - 롤 아이디 입력: lolu3#KR1/);
+  assert.match(log, /\[입력\] 계정 등록 - 롤 아이디 입력: lolu3#KR1 \| u3님/);
+  assert.match(log, /\[입력\] 대전 참가 - 포지션 선택: ADC \| u3님/);
   assert.match(log, /\[버튼\] 대전 관리 \| u5님 .* \| 실패 \| ⚠️ 권한이 없습니다/);
 });

@@ -87,6 +87,13 @@ function describeInteraction(interaction, labelFor = (a) => a) {
     } catch {
       /* 롤 아이디 입력창이 아님 */
     }
+    if (!detail) {
+      try {
+        detail = (interaction.fields.getStringSelectValues('position') || []).join(', ');
+      } catch {
+        /* 포지션 입력창이 아님 */
+      }
+    }
     return `[입력] ${label}${detail ? `: ${detail}` : ''}`;
   }
   return label;

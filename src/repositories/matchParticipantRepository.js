@@ -26,6 +26,7 @@ function createMatchParticipantRepository(db) {
     ),
     delete: db.prepare('DELETE FROM match_participant WHERE id = ?'),
     updatePosition: db.prepare('UPDATE match_participant SET position = ? WHERE id = ?'),
+    updateGameName: db.prepare('UPDATE match_participant SET game_name = ? WHERE id = ?'),
     lockTeam: db.prepare('UPDATE match_participant SET team_id = ?, is_team_locked = 1 WHERE id = ?'),
     unlockTeam: db.prepare(
       'UPDATE match_participant SET team_id = NULL, is_team_locked = 0 WHERE id = ?',
@@ -49,6 +50,7 @@ function createMatchParticipantRepository(db) {
       Number(stmts.insert.run(matchId, guildMemberId, gameName).lastInsertRowid),
     delete: (id) => stmts.delete.run(id),
     updatePosition: (id, position) => stmts.updatePosition.run(position, id),
+    updateGameName: (id, gameName) => stmts.updateGameName.run(gameName, id),
     lockTeam: (id, teamId) => stmts.lockTeam.run(teamId, id),
     unlockTeam: (id) => stmts.unlockTeam.run(id),
     assignTeam: (id, teamId) => stmts.assignTeam.run(teamId, id),

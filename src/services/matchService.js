@@ -10,31 +10,7 @@ const {
 const { createHash } = require('node:crypto');
 const { UserError } = require('../utils/errors');
 const { normalizeChampion, championKey } = require('./statInput');
-
-/**
- * 롤 아이디(Riot ID) 형식: 게임이름#태그 (예: Hide on bush#KR1)
- * - 게임이름: 글자/숫자/공백 3~16자
- * - 태그: 글자/숫자 3~5자 (특수문자 불가)
- */
-const GAME_NAME_PATTERN = /^[\p{L}\p{N} ]{3,16}#[\p{L}\p{N}]{3,5}$/u;
-const GAME_NAME_HELP =
-  '롤 아이디는 `게임이름#태그` 형식으로 입력해 주세요. 게임이름은 3~16자, 태그는 특수문자 없이 3~5자입니다. (예: Hide on bush#KR1)';
-
-function normalizeGameName(gameName) {
-  const raw = String(gameName ?? '').trim();
-  const parts = raw.split('#');
-  if (parts.length !== 2) throw new UserError(GAME_NAME_HELP);
-  const value = `${parts[0].trim().replace(/\s+/g, ' ')}#${parts[1].trim()}`;
-  if (!GAME_NAME_PATTERN.test(value)) throw new UserError(GAME_NAME_HELP);
-  return value;
-}
-
-/** 포지션 값 검사 (null = 미정) */
-function normalizePosition(position) {
-  if (position == null || position === 'NONE') return null;
-  if (!POSITIONS.includes(position)) throw new UserError('알 수 없는 포지션입니다.');
-  return position;
-}
+const { normalizeGameName, normalizePosition } = require('./validation');
 
 /**
  * 팀 구성 서명: 기록 입력창을 띄운 뒤 팀이 바뀌었는지(셔플 등) 확인하는 데 쓴다.
@@ -50,7 +26,7 @@ function teamSignature(red, blue) {
  * 서버(guild)당 진행 중인 대전은 1개만 존재한다. 대전 안에는 1~10판이 있다.
  */
 function createMatchService(repos, accounts) {
-  const { matches, teams, participants, records, recordPlayers, accounts: accountRepo, transaction } = repos;
+  const { matches, teams, participants, records, recordPlayers, transaction } = repos;
 
   function getActiveMatch(guildId) {
     return matches.findActiveByGuild(guildId);
@@ -128,6 +104,27 @@ function createMatchService(repos, accounts) {
     });
   }
 
+  /**
+   * 피어리스: 이 대전에서 이미 사용된 챔피언 (판 순서대로)
+   * @returns {{ champion: string, key: string, gameNo: number, discordUserId: string, side: string }[]}
+   */
+  function usedChampionList(games) {
+    const list = [];
+    for (const g of games) {
+      for (const p of g.players) {
+        if (!p.champion) continue;
+        list.push({
+          champion: p.champion,
+          key: championKey(p.champion),
+          gameNo: g.game_no,
+          discordUserId: p.discord_user_id,
+          side: p.side,
+        });
+      }
+    }
+    return list;
+  }
+
   /** 피어리스 표시용: 서버 회원별로 판 순서대로 플레이한 챔피언 목록 */
   function championsByMember(games) {
     const map = {};
@@ -171,23 +168,36 @@ function createMatchService(repos, accounts) {
       unassigned: list.filter((p) => !p.side),
       games,
       champions: championsByMember(games),
+      usedChampions: usedChampionList(games),
     };
   }
 
   /** 서버에 진행 중인 대전이 없고 등록 가능한지 미리 확인한다. (버튼 → 판 수 선택 전) */
   function checkCanCreate({ guildId, discordUserId }) {
     const member = accounts.getActiveMember(guildId, discordUserId);
+    requireAccountGameName(member);
     if (getActiveMatch(guildId)) {
       throw new UserError('이 서버에는 이미 진행 중인 대전이 있습니다. 서버마다 대전은 하나만 진행할 수 있습니다.');
     }
     return member;
   }
 
-  function addParticipant(match, member, gameName, position = null) {
+  /** 계정에 등록된 롤 아이디 (대전 참가에 필요) */
+  function requireAccountGameName(member) {
+    if (!member.game_name) {
+      throw new UserError('계정에 롤 아이디가 없습니다. 계정관리 채널의 [아이디 변경]으로 롤 아이디를 먼저 등록해 주세요.');
+    }
+    return member.game_name;
+  }
+
+  /**
+   * 참가자 추가. 롤 아이디는 계정에 등록된 아이디를 쓰고, 포지션을 고르지 않으면(undefined) 선호 포지션을 쓴다.
+   */
+  function addParticipant(match, member, position) {
+    const gameName = requireAccountGameName(member);
+    const pos = position === undefined ? member.preferred_position ?? null : normalizePosition(position);
     const participantId = participants.insert(match.id, member.id, gameName);
-    if (position) participants.updatePosition(participantId, position);
-    if (gameName) accountRepo.updateLastGameName(member.account_id, gameName);
-    accountRepo.updateLastPosition(member.account_id, position);
+    if (pos) participants.updatePosition(participantId, pos);
     participants.resetShuffledByMatch(match.id);
   }
 
@@ -195,18 +205,17 @@ function createMatchService(repos, accounts) {
    * 대전 등록: 판 수(1~10)를 정하고, 등록자는 자동으로 참가한다.
    * @returns {object} match
    */
-  const createMatch = transaction(({ guildId, discordUserId, channelId, gameCount, gameName, position = null }) => {
+  const createMatch = transaction(({ guildId, discordUserId, channelId, gameCount, position }) => {
     const count = Number(gameCount);
     if (!Number.isInteger(count) || count < MIN_GAMES || count > MAX_GAMES) {
       throw new UserError(`판 수는 ${MIN_GAMES}~${MAX_GAMES}판 중에서 골라 주세요.`);
     }
-    const name = normalizeGameName(gameName);
-    const pos = normalizePosition(position);
     const member = checkCanCreate({ guildId, discordUserId });
+    requireAccountGameName(member);
     const matchId = matches.insert(guildId, channelId, member.id, count);
     for (const side of SIDES) teams.insert(matchId, side);
     const match = matches.findById(matchId);
-    addParticipant(match, member, name, pos);
+    addParticipant(match, member, position);
     return match;
   });
 
@@ -218,6 +227,7 @@ function createMatchService(repos, accounts) {
   /** 참가 가능한지 미리 확인한다. (버튼 → 아이디 입력창 띄우기 전) */
   function checkCanJoin({ guildId, discordUserId, matchId = null }) {
     const member = accounts.getActiveMember(guildId, discordUserId);
+    requireAccountGameName(member);
     const match = requireActiveMatchById(guildId, matchId);
     requireRecruiting(match);
     if (participants.findByMatchAndMember(match.id, member.id)) {
@@ -230,18 +240,15 @@ function createMatchService(repos, accounts) {
   }
 
   /**
-   * 대전 참가 (롤 아이디 입력). gameName을 생략하면 아이디 없이 참가한다. (관리자 커맨드용)
+   * 대전 참가. 롤 아이디는 계정에 등록된 아이디를 쓴다.
+   * position을 생략하면(undefined) 선호 포지션, null이면 미정.
    * @returns {{ match: object, count: number }}
    */
-  const join = transaction(
-    ({ guildId, discordUserId, matchId = null, gameName = null, position = null, requireGameName = true }) => {
-    const name = gameName == null && !requireGameName ? null : normalizeGameName(gameName);
-    const pos = normalizePosition(position);
+  const join = transaction(({ guildId, discordUserId, matchId = null, position }) => {
     const { member, match } = checkCanJoin({ guildId, discordUserId, matchId });
-    addParticipant(match, member, name, pos);
+    addParticipant(match, member, position);
     return { match, count: participants.countByMatch(match.id) };
-  },
-  );
+  });
 
   /** 대전 탈퇴 */
   const leave = transaction(({ guildId, discordUserId, matchId = null }) => {
@@ -298,7 +305,15 @@ function createMatchService(repos, accounts) {
     }
     const list = participants.findByMatchWithDetails(match.id);
     const { red, blue } = requireFullTeams(list);
-    return { match, gameNo: recorded + 1, participants: list, red, blue, signature: teamSignature(red, blue) };
+    return {
+      match,
+      gameNo: recorded + 1,
+      participants: list,
+      red,
+      blue,
+      signature: teamSignature(red, blue),
+      usedChampions: usedChampionList(getGames(match.id)),
+    };
   }
 
   function recordedByMemberId(guildId, discordUserId) {
@@ -327,7 +342,7 @@ function createMatchService(repos, accounts) {
       screenshotPath = null,
     }) => {
       if (!SIDES.includes(winnerSide)) throw new UserError('승리팀을 골라 주세요.');
-      const { match, gameNo: expected, red, blue, signature: current } = checkCanRecord({
+      const { match, gameNo: expected, red, blue, signature: current, usedChampions } = checkCanRecord({
         guildId,
         discordUserId,
         matchId,
@@ -351,12 +366,21 @@ function createMatchService(repos, accounts) {
       if (byParticipant.size !== players.length) {
         throw new UserError('대전 참가자만 기록할 수 있습니다.');
       }
-      // 챔피언: 필수, 한 판 안에서는 같은 챔피언을 두 명이 할 수 없다.
+      // 챔피언: 필수. 피어리스 - 이 대전의 이전 판에서 누구든 사용한 챔피언은 다시 쓸 수 없고,
+      //         한 판 안에서도 같은 챔피언을 두 명이 할 수 없다.
+      const used = new Map(usedChampions.map((u) => [u.key, u]));
       const seen = new Map();
       for (const p of players) {
         const champion = normalizeChampion(byParticipant.get(p.id).champion);
         if (!champion) throw new UserError('참가자 10명의 챔피언을 모두 입력해 주세요.');
         const key = championKey(champion);
+        if (used.has(key)) {
+          const u = used.get(key);
+          throw new UserError(
+            `피어리스: ${champion}은(는) ${u.gameNo}판에서 이미 사용한 챔피언이라 이 대전에서는 다시 쓸 수 없습니다. ` +
+              `(${p.display_name || p.discord_user_id}님의 챔피언을 확인해 주세요)`,
+          );
+        }
         if (seen.has(key)) {
           throw new UserError(`한 판에서 같은 챔피언(${champion})을 두 명이 할 수 없습니다. 챔피언을 확인해 주세요.`);
         }

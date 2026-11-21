@@ -53,7 +53,9 @@ function accountPanelMessage() {
       [
         '내전에 참가하려면 먼저 이 서버에 계정을 등록해야 합니다.',
         '',
-        '✅ **[계정 등록]** 이 서버에 계정을 등록합니다.',
+        '✅ **[계정 등록]** 롤 아이디와 함께 계정을 등록합니다. (계정당 아이디 1개)',
+        '✏️ **[아이디 변경]** 등록한 롤 아이디를 바꿉니다.',
+        '🎯 **[선호 포지션]** 대전 참가 때 기본으로 선택될 포지션을 정합니다.',
         '👋 **[계정 탈퇴]** 계정을 탈퇴합니다. (기록은 남고, 다시 등록하면 이어집니다)',
         '',
         '버튼을 누른 결과는 누른 사람에게만 보입니다.',
@@ -61,9 +63,51 @@ function accountPanelMessage() {
     );
   const row = new ActionRowBuilder().addComponents(
     button(ACTIONS.PANEL_REGISTER, '계정 등록', ButtonStyle.Success, '✅'),
+    button(ACTIONS.ACCOUNT_CHANGE_ID, '아이디 변경', ButtonStyle.Secondary, '✏️'),
+    button(ACTIONS.ACCOUNT_POSITION, '선호 포지션', ButtonStyle.Secondary, '🎯'),
     button(ACTIONS.PANEL_WITHDRAW, '계정 탈퇴', ButtonStyle.Danger, '👋'),
   );
   return { embeds: [embed], components: [row] };
+}
+
+/** 계정 등록 / 아이디 변경 입력창: 롤 아이디 (계정당 1개) */
+function accountGameNameModal(customId, title, defaultValue) {
+  const input = new TextInputBuilder()
+    .setCustomId('gameName')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMinLength(5)
+    .setMaxLength(30)
+    .setPlaceholder('게임이름#태그 (예: Hide on bush#KR1)');
+  if (defaultValue) input.setValue(defaultValue);
+  return new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(title)
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('롤 아이디')
+        .setDescription('계정당 1개만 등록할 수 있고, 다른 사람이 등록한 아이디는 쓸 수 없습니다.')
+        .setTextInputComponent(input),
+    );
+}
+
+function positionOptions(current) {
+  return [
+    ...POSITIONS.map((value) => ({ label: POSITION_LABELS[value], value, default: current === value })),
+    { label: UNDECIDED_LABEL, value: 'NONE', default: !current },
+  ];
+}
+
+/** 선호 포지션 선택 메뉴 (본인만) */
+function preferredPositionSelect(current) {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(ACTIONS.ACCOUNT_POSITION_SELECT)
+    .setPlaceholder('선호 포지션')
+    .addOptions(positionOptions(current));
+  return {
+    content: `🎯 대전 참가 때 기본으로 선택될 포지션을 골라 주세요. (현재: **${positionLabel(current)}**)`,
+    components: [new ActionRowBuilder().addComponents(select)],
+  };
 }
 
 /* ───────────── /대전 관리 패널 (모두에게 보임) ───────────── */
@@ -78,7 +122,7 @@ function panelMessage() {
         '',
         '1️⃣ 처음이라면 계정관리 채널에서 **[계정 등록]**을 먼저 눌러 주세요.',
         '2️⃣ **[대전 등록]**으로 판 수를 정해 대전을 엽니다. (서버당 1개)',
-        '3️⃣ 대전 정보 메시지의 **[대전 참가]**로 롤 아이디를 입력하고 참가합니다.',
+        '3️⃣ 대전 정보 메시지의 **[대전 참가]**로 포지션을 골라 참가합니다. (롤 아이디는 계정에 등록된 아이디)',
         '',
         '버튼을 누른 결과는 누른 사람에게만 보입니다.',
       ].join('\n'),
@@ -110,45 +154,44 @@ function gameCountSelect() {
 
 /** 롤 아이디 입력창 (대전 등록 / 대전 참가 공용) */
 /**
- * 참가 입력창 (대전 등록 / 대전 참가 공용): 롤 아이디 + 포지션 미리 선택
- * @param {string|null} defaultName 마지막으로 입력한 롤 아이디
- * @param {string|null} defaultPosition 마지막으로 고른 포지션 (null = 미정)
+ * 참가 입력창 (대전 등록 / 대전 참가 공용): 포지션 선택
+ * 롤 아이디는 계정에 등록된 아이디를 쓰므로 입력하지 않는다.
+ * @param {string|null} defaultPosition 선호 포지션 (null = 미정)
  */
-function gameNameModal(customId, title, defaultValue, defaultPosition = null) {
-  const input = new TextInputBuilder()
-    .setCustomId('gameName')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMinLength(5)
-    .setMaxLength(30)
-    .setPlaceholder('게임이름#태그 (예: Hide on bush#KR1)');
-  if (defaultValue) input.setValue(defaultValue);
+function joinModal(customId, title, defaultPosition = null, gameName = null) {
   return new ModalBuilder()
     .setCustomId(customId)
     .setTitle(title)
     .addLabelComponents(
       new LabelBuilder()
-        .setLabel('롤 아이디')
-        .setDescription('대전에서 사용할 롤 아이디를 입력해 주세요.')
-        .setTextInputComponent(input),
-      new LabelBuilder()
         .setLabel('포지션')
-        .setDescription('이번 대전에서 맡을 포지션 (참가 후에도 바꿀 수 있습니다)')
+        .setDescription(
+          `${gameName ? `🎮 ${gameName} · ` : ''}기본값은 선호 포지션입니다. (참가 후에도 바꿀 수 있습니다)`.slice(0, 100),
+        )
         .setStringSelectMenuComponent(
           new StringSelectMenuBuilder()
             .setCustomId('position')
             .setMinValues(1)
             .setMaxValues(1)
-            .addOptions([
-              ...POSITIONS.map((value) => ({
-                label: POSITION_LABELS[value],
-                value,
-                default: defaultPosition === value,
-              })),
-              { label: UNDECIDED_LABEL, value: 'NONE', default: !defaultPosition },
-            ]),
+            .addOptions(positionOptions(defaultPosition)),
         ),
     );
+}
+
+/** 피어리스: 이 대전에서 이미 사용해 다시 쓸 수 없는 챔피언 (판별) */
+function usedChampionsField(view) {
+  const used = view.usedChampions || [];
+  if (used.length === 0) return null;
+  const byGame = new Map();
+  for (const u of used) {
+    if (!byGame.has(u.gameNo)) byGame.set(u.gameNo, []);
+    byGame.get(u.gameNo).push(u.champion);
+  }
+  const value = [...byGame.entries()]
+    .map(([gameNo, champs]) => `**${gameNo}판** ${champs.join(', ')}`)
+    .join('\n')
+    .slice(0, 1024);
+  return { name: `🚫 피어리스 - 사용한 챔피언 (${used.length}) · 이 대전에서 다시 쓸 수 없음`, value };
 }
 
 /** 피어리스: 판 순서대로 플레이한 챔피언 (예: 제라스 - 룰루) */
@@ -174,6 +217,11 @@ function teamFields(view, { detail = false } = {}) {
         ? g.list
             .map((p) => {
               const parts = [mention(p.discord_user_id)];
+              if (!detail) {
+                // 공개 대전 정보: 피어리스 - 이전 판에 한 챔피언
+                const champions = championText(view, p);
+                if (champions) parts.push(`(${champions})`);
+              }
               if (detail) {
                 parts.push(`\`${positionLabel(p.position)}\``);
                 const champions = championText(view, p);
@@ -203,6 +251,8 @@ function matchSummaryFields(view) {
   }
   fields.push({ name: `참가자 (${participants.length}/${MATCH_SIZE})`, value: '팀별로 표시합니다. (📌 = 팀 직접 선택)' });
   fields.push(...teamFields(view));
+  const used = usedChampionsField(view);
+  if (used) fields.push(used);
   return fields;
 }
 
@@ -255,8 +305,10 @@ function matchDetailEmbed(view) {
       { name: '상태', value: MATCH_STATUS_LABELS[match.status], inline: true },
       { name: '기록된 판', value: `${games.length}/${match.game_count}판`, inline: true },
     )
-    .setDescription(`참가자 **${participants.length}/${MATCH_SIZE}**명 · 포지션 · 롤 아이디 (📌 = 팀 직접 선택)`)
+    .setDescription(`참가자 **${participants.length}/${MATCH_SIZE}**명 · 포지션 · 롤 아이디(이전 판 챔피언) (📌 = 팀 직접 선택)`)
     .addFields(teamFields(view, { detail: true }));
+  const used = usedChampionsField(view);
+  if (used) embed.addFields(used);
   return embed;
 }
 
@@ -348,7 +400,9 @@ function controlPanel(view, notice = null, embeds = []) {
  * 판 기록 입력창: 결과 캡쳐 + 승리팀 + 팀별 K/D/A/CS
  * 팀별 입력칸에는 팀원 이름이 미리 채워진 양식이 들어가며, 숫자만 바꾸면 된다.
  */
-function recordModal(matchId, gameNo, red, blue, signature = '') {
+function recordModal(matchId, gameNo, red, blue, signature = '', usedChampions = []) {
+  const banned = usedChampions.map((u) => u.champion);
+  const bannedText = banned.length ? `사용 불가: ${banned.join(', ')}` : '이전 판에 쓴 챔피언은 쓸 수 없음 (피어리스)';
   const statInput = (customId, members) =>
     new TextInputBuilder()
       .setCustomId(customId)
@@ -382,11 +436,11 @@ function recordModal(matchId, gameNo, red, blue, signature = '') {
         ),
       new LabelBuilder()
         .setLabel(`🔴 ${SIDE_LABELS.RED} 챔피언 · 킬/데스/어시/CS`)
-        .setDescription('줄마다 챔피언과 숫자를 바꿔 주세요. 예) 1. 홍길동 : 제라스 5/2/10/180')
+        .setDescription(`챔피언과 숫자를 바꿔 주세요. ${bannedText}`.slice(0, 100))
         .setTextInputComponent(statInput('statsRED', red)),
       new LabelBuilder()
         .setLabel(`🔵 ${SIDE_LABELS.BLUE} 챔피언 · 킬/데스/어시/CS`)
-        .setDescription('줄마다 챔피언과 숫자를 바꿔 주세요. 예) 1. 김철수 : 룰루 3/4/7/150')
+        .setDescription(`예) 1. 홍길동 : 제라스 5/2/10/180 · ${bannedText}`.slice(0, 100))
         .setTextInputComponent(statInput('statsBLUE', blue)),
     );
 }
@@ -449,7 +503,9 @@ module.exports = {
   accountPanelMessage,
   panelMessage,
   gameCountSelect,
-  gameNameModal,
+  accountGameNameModal,
+  preferredPositionSelect,
+  joinModal,
   matchPublicMessage,
   matchDetailEmbed,
   matchMessageLink,

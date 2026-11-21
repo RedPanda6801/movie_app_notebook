@@ -89,6 +89,22 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // v4 -> v5: 롤 아이디를 계정에 1개로 등록 (중복 불가), 선호 포지션
+    //   last_game_name -> game_name, last_position -> preferred_position
+    version: 5,
+    up(db) {
+      db.exec(`
+        ALTER TABLE account RENAME COLUMN last_game_name TO game_name;
+        ALTER TABLE account RENAME COLUMN last_position TO preferred_position;
+        -- 같은 아이디를 여러 계정이 쓰고 있었다면 먼저 쓴 계정만 남긴다.
+        UPDATE account SET game_name = NULL
+         WHERE game_name IS NOT NULL
+           AND id NOT IN (SELECT MIN(id) FROM account WHERE game_name IS NOT NULL GROUP BY lower(game_name));
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_account_game_name ON account (lower(game_name)) WHERE game_name IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));

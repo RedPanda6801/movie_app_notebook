@@ -56,6 +56,10 @@ test('기존(v1) DB를 최신 스키마로 올리고 기존 승점을 유지한�
   const players = db.prepare('SELECT * FROM match_record_player ORDER BY guild_member_id').all();
   assert.deepEqual(players.map((p) => [p.guild_member_id, p.side, p.is_win, p.kills]), [[1, 'RED', 1, null], [2, 'BLUE', 0, null]]);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'match_record_winner'").get().n, 0);
+  // v5: 계정의 롤 아이디(중복 불가) + 선호 포지션
+  const columns = db.prepare('PRAGMA table_info(account)').all().map((c) => c.name);
+  assert.ok(columns.includes('game_name') && columns.includes('preferred_position'));
+  assert.ok(!columns.includes('last_game_name'));
   db.close();
 
   // 다시 열어도 마이그레이션이 중복 적용되지 않는다

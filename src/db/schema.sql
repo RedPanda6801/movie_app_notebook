@@ -19,8 +19,8 @@ CREATE TABLE IF NOT EXISTS account (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     discord_user_id TEXT    NOT NULL UNIQUE,
     username        TEXT,
-    last_game_name  TEXT,   -- 마지막으로 입력한 롤 아이디 (참가 입력창 기본값)
-    last_position   TEXT CHECK (last_position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')), -- 마지막으로 고른 포지션 (참가 입력창 기본값)
+    game_name       TEXT,   -- 계정의 롤 아이디 (계정당 1개, 다른 계정과 중복 불가)
+    preferred_position TEXT CHECK (preferred_position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')), -- 선호 포지션 (대전 참가 시 기본값)
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS match_record_player (
     PRIMARY KEY (record_id, guild_member_id)
 );
 
+-- 롤 아이디는 계정 하나만 쓸 수 있다 (대소문자 무시)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_game_name ON account (lower(game_name)) WHERE game_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_guild_member_account ON guild_member (account_id);
 CREATE INDEX IF NOT EXISTS ix_match_guild ON match (guild_id);
 CREATE INDEX IF NOT EXISTS ix_participant_member ON match_participant (guild_member_id);

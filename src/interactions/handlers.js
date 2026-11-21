@@ -62,17 +62,60 @@ const handlers = {
   /* ───────────── /계정 관리 패널 ───────────── */
 
   async [ACTIONS.PANEL_REGISTER](interaction, ctx) {
-    const { reactivated } = ctx.services.accounts.register({
+    const { gameName } = ctx.services.accounts.getRegisterDefaults(ctx.guild.id, interaction.user.id);
+    return interaction.showModal(views.accountGameNameModal(ACTIONS.ACCOUNT_REGISTER_MODAL, '계정 등록', gameName));
+  },
+
+  async [ACTIONS.ACCOUNT_REGISTER_MODAL](interaction, ctx) {
+    const { reactivated, member } = ctx.services.accounts.register({
       guildId: ctx.guild.id,
       discordUserId: interaction.user.id,
       username: interaction.user.username,
       displayName: interaction.member?.displayName ?? interaction.user.globalName ?? null,
+      gameName: interaction.fields.getTextInputValue('gameName'),
     });
     return interaction.reply(
-      reactivated
+      (reactivated
         ? '✅ 계정이 다시 등록되었습니다. 이전 승점 기록이 그대로 이어집니다.'
-        : '✅ 계정이 등록되었습니다. 이제 대전에 참가할 수 있습니다.',
+        : '✅ 계정이 등록되었습니다. 이제 대전에 참가할 수 있습니다.') +
+        `\n🎮 롤 아이디: **${member.game_name}** · 선호 포지션은 [선호 포지션]으로 정할 수 있습니다.`,
     );
+  },
+
+  async [ACTIONS.ACCOUNT_CHANGE_ID](interaction, ctx) {
+    const member = ctx.services.accounts.getActiveMember(ctx.guild.id, interaction.user.id);
+    return interaction.showModal(
+      views.accountGameNameModal(ACTIONS.ACCOUNT_CHANGE_ID_MODAL, '롤 아이디 변경', member.game_name),
+    );
+  },
+
+  async [ACTIONS.ACCOUNT_CHANGE_ID_MODAL](interaction, ctx) {
+    const { gameName, matchId } = ctx.services.accounts.changeGameName({
+      guildId: ctx.guild.id,
+      discordUserId: interaction.user.id,
+      gameName: interaction.fields.getTextInputValue('gameName'),
+    });
+    await interaction.reply(
+      `✏️ 롤 아이디를 **${gameName}**(으)로 바꿨습니다.${matchId ? ` 모집 중인 대전 #${matchId}에도 반영했습니다.` : ''}`,
+    );
+    if (matchId) await refreshMatchMessage(ctx.client, ctx.services, matchId);
+  },
+
+  async [ACTIONS.ACCOUNT_POSITION](interaction, ctx) {
+    const member = ctx.services.accounts.getActiveMember(ctx.guild.id, interaction.user.id);
+    return interaction.reply(views.preferredPositionSelect(member.preferred_position));
+  },
+
+  async [ACTIONS.ACCOUNT_POSITION_SELECT](interaction, ctx) {
+    const { position } = ctx.services.accounts.setPreferredPosition({
+      guildId: ctx.guild.id,
+      discordUserId: interaction.user.id,
+      position: interaction.values[0],
+    });
+    return interaction.update({
+      content: `🎯 선호 포지션: **${positionLabel(position)}** · 다음 대전 참가부터 기본값으로 선택됩니다.`,
+      components: [],
+    });
   },
 
   async [ACTIONS.PANEL_WITHDRAW](interaction, ctx) {
@@ -110,11 +153,11 @@ const handlers = {
     const gameCount = Number(interaction.values[0]);
     const member = ctx.services.matches.checkCanCreate(base(interaction, ctx));
     return interaction.showModal(
-      views.gameNameModal(
+      views.joinModal(
         buildId(ACTIONS.CREATE_MODAL, gameCount),
-        `대전 등록 (${gameCount}판) - 롤 아이디`,
-        member.last_game_name,
-        member.last_position,
+        `대전 등록 (${gameCount}판)`,
+        member.preferred_position,
+        member.game_name,
       ),
     );
   },
@@ -126,7 +169,6 @@ const handlers = {
       ...base(interaction, ctx),
       channelId: interaction.channelId,
       gameCount: Number(gameCount),
-      gameName: interaction.fields.getTextInputValue('gameName'),
       position: selectedPosition(interaction),
     });
 
@@ -145,19 +187,18 @@ const handlers = {
   async [ACTIONS.JOIN](interaction, ctx, [matchId]) {
     const { member, match } = ctx.services.matches.checkCanJoin(base(interaction, ctx, matchId));
     return interaction.showModal(
-      views.gameNameModal(
+      views.joinModal(
         buildId(ACTIONS.JOIN_MODAL, match.id),
         `대전 #${match.id} 참가`,
-        member.last_game_name,
-        member.last_position,
+        member.preferred_position,
+        member.game_name,
       ),
     );
   },
 
   async [ACTIONS.JOIN_MODAL](interaction, ctx, [matchId]) {
-    const gameName = interaction.fields.getTextInputValue('gameName');
     const position = selectedPosition(interaction);
-    const { match, count } = ctx.services.matches.join({ ...base(interaction, ctx, matchId), gameName, position });
+    const { match, count } = ctx.services.matches.join({ ...base(interaction, ctx, matchId), position });
     const lines = [`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE}) · 포지션: **${positionLabel(position)}**`];
     if (count === MATCH_SIZE) lines.push('🎉 10명이 모두 모였습니다! 관리자가 대전을 시작하면 진행됩니다.');
     lines.push('포지션과 팀은 대전 정보 메시지의 [포지션 등록/변경] · [팀 등록/변경] 버튼으로 정할 수 있습니다.');
@@ -248,8 +289,10 @@ const handlers = {
   },
 
   async [ACTIONS.RECORD](interaction, ctx, [matchId]) {
-    const { match, gameNo, red, blue, signature } = ctx.services.matches.checkCanRecord(base(interaction, ctx, matchId));
-    return interaction.showModal(views.recordModal(match.id, gameNo, red, blue, signature));
+    const { match, gameNo, red, blue, signature, usedChampions } = ctx.services.matches.checkCanRecord(
+      base(interaction, ctx, matchId),
+    );
+    return interaction.showModal(views.recordModal(match.id, gameNo, red, blue, signature, usedChampions));
   },
 
   async [ACTIONS.RECORD_MODAL](interaction, ctx, [matchId, gameNo, signature]) {

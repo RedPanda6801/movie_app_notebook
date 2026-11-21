@@ -198,7 +198,7 @@ function memberStatsMessage(data) {
     .setColor(COLORS.GREEN)
     .setDescription(
       [
-        `${mention(member.discord_user_id)}${member.status === 'WITHDRAWN' ? ' (탈퇴)' : ''}${member.last_game_name ? ` · 🎮 ${member.last_game_name}` : ''}`,
+        `${mention(member.discord_user_id)}${member.status === 'WITHDRAWN' ? ' (탈퇴)' : ''}${member.game_name ? ` · 🎮 ${member.game_name}` : ''}`,
         '',
         `**${s.games}판 ${summaryText(s)}**`,
         `승점 **${s.points}점**`,

@@ -23,8 +23,7 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName('참가')
-        .setDescription('(관리자 본인) 진행 중인 대전에 참가합니다.')
-        .addStringOption((o) => o.setName('아이디').setDescription('롤 아이디 (예: Hide on bush#KR1)')),
+        .setDescription('(관리자 본인) 진행 중인 대전에 참가합니다. (계정의 롤 아이디 · 선호 포지션 사용)'),
     )
     .addSubcommand((s) => s.setName('탈퇴').setDescription('(관리자 본인) 대전 참가를 철회합니다.'))
     .addSubcommand((s) =>
@@ -58,8 +57,7 @@ module.exports = {
         return interaction.reply({ ...views.panelMessage(), public: true });
 
       case '참가': {
-        const gameName = interaction.options.getString('아이디');
-        const { match, count } = matches.join({ ...base, gameName, requireGameName: false });
+        const { match, count } = matches.join(base);
         await interaction.reply(`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE})`);
         return refresh(match.id);
       }
