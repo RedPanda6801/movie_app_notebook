@@ -3,11 +3,12 @@
  * 대전 관련 버튼에는 대전 ID를 넣어, 끝난 대전의 옛 메시지 버튼을 구분한다.
  */
 const ACTIONS = {
+  // /계정 관리 패널
+  PANEL_REGISTER: 'panel.register',
+  PANEL_WITHDRAW: 'panel.withdraw',
   // /대전 관리 패널
   PANEL_CREATE: 'panel.create',
   PANEL_ACTIVE: 'panel.active',
-  PANEL_REGISTER: 'panel.register',
-  PANEL_WITHDRAW: 'panel.withdraw',
   // 대전 등록 과정
   CREATE_GAMES: 'create.games', // 판 수 선택 메뉴
   CREATE_MODAL: 'create.modal', // 등록자 롤 아이디 입력창 |<판 수>
@@ -18,9 +19,12 @@ const ACTIONS = {
   VIEW: 'match.view',
   POSITION: 'match.position',
   POSITION_SELECT: 'match.positionSelect',
+  TEAM: 'match.team',
+  TEAM_SELECT: 'match.teamSelect',
   MANAGE: 'match.manage',
   // 관리 패널 (관리자 / 대전 등록자)
   START: 'control.start',
+  SHUFFLE: 'control.shuffle',
   RECORD: 'control.record',
   RECORD_MODAL: 'control.recordModal', // |<matchId>|<판 번호>
   FINISH: 'control.finish',
@@ -41,8 +45,11 @@ const ACTION_LABELS = {
   [ACTIONS.VIEW]: '대전 조회',
   [ACTIONS.POSITION]: '포지션 등록/변경',
   [ACTIONS.POSITION_SELECT]: '포지션 선택',
+  [ACTIONS.TEAM]: '팀 등록/변경',
+  [ACTIONS.TEAM_SELECT]: '팀 선택',
   [ACTIONS.MANAGE]: '대전 관리',
   [ACTIONS.START]: '대전 시작',
+  [ACTIONS.SHUFFLE]: '팀 랜덤 셔플',
   [ACTIONS.RECORD]: '대전 기록',
   [ACTIONS.RECORD_MODAL]: '대전 기록 - 결과 입력',
   [ACTIONS.FINISH]: '대전 종료',

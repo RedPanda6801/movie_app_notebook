@@ -78,7 +78,7 @@ function createMatchService(repos, accounts) {
 
   function requireManager(match, member, isAdmin) {
     if (!canManage(match, member, isAdmin)) {
-      throw new UserError('권한이 없습니다. 대전 시작/기록/종료는 관리자 또는 대전 등록자만 할 수 있습니다.');
+      throw new UserError('권한이 없습니다. 대전 시작/팀 셔플/기록/종료는 관리자 또는 대전 등록자만 할 수 있습니다.');
     }
   }
 

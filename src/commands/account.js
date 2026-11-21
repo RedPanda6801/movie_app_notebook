@@ -1,15 +1,24 @@
 const { SlashCommandBuilder } = require('discord.js');
+const views = require('../interactions/views');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('계정')
     .setDescription('계정관리 (관리자 전용, 이 서버 기준)')
-    .addSubcommand((s) => s.setName('등록').setDescription('이 서버에 계정을 등록합니다.'))
-    .addSubcommand((s) => s.setName('탈퇴').setDescription('이 서버에서 계정을 탈퇴합니다.')),
+    .addSubcommand((s) =>
+      s.setName('관리').setDescription('이 채널에 [계정 등록]/[계정 탈퇴] 버튼 패널을 올립니다.'),
+    )
+    .addSubcommand((s) => s.setName('등록').setDescription('(관리자 본인) 이 서버에 계정을 등록합니다.'))
+    .addSubcommand((s) => s.setName('탈퇴').setDescription('(관리자 본인) 이 서버에서 계정을 탈퇴합니다.')),
 
   async execute(interaction, { services, guild }) {
     const discordUserId = interaction.user.id;
     const sub = interaction.options.getSubcommand();
+
+    if (sub === '관리') {
+      // 계정관리 채널용 버튼 패널은 모두가 눌러야 하므로 공개 메시지로 올린다.
+      return interaction.reply({ ...views.accountPanelMessage(), public: true });
+    }
 
     if (sub === '등록') {
       const { reactivated } = services.accounts.register({

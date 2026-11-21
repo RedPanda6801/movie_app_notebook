@@ -13,7 +13,7 @@ module.exports = {
         .setName('등록')
         .setDescription('원하는 팀을 직접 선택합니다. (팀 셔플에서 제외됩니다)')
         .addStringOption((o) =>
-          o.setName('팀').setDescription('레드팀 / 블루팀').setRequired(true).addChoices(...sideChoices),
+          o.setName('팀').setDescription('1팀 / 2팀').setRequired(true).addChoices(...sideChoices),
         ),
     )
     .addSubcommand((s) => s.setName('탈퇴').setDescription('소속된 팀에서 빠집니다.'))
@@ -21,8 +21,8 @@ module.exports = {
       s.setName('셔플').setDescription('10명이 모이면 팀을 자동으로 섞어 정합니다. (포지션 우선)'),
     ),
 
-  async execute(interaction, { services, guild }) {
-    const base = { guildId: guild.id, discordUserId: interaction.user.id };
+  async execute(interaction, { services, guild, isAdmin }) {
+    const base = { guildId: guild.id, discordUserId: interaction.user.id, isAdmin };
     const sub = interaction.options.getSubcommand();
 
     if (sub === '등록') {

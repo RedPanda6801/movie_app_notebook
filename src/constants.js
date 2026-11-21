@@ -11,7 +11,9 @@ const POSITION_LABELS = {
 };
 
 const SIDES = ['RED', 'BLUE'];
-const SIDE_LABELS = { RED: '레드팀', BLUE: '블루팀' };
+/** 내부 값은 RED/BLUE, 화면에는 1팀/2팀으로 표시한다. */
+const SIDE_LABELS = { RED: '1팀', BLUE: '2팀' };
+const UNDECIDED_LABEL = '미정';
 
 const MATCH_STATUS = {
   RECRUITING: 'RECRUITING',
@@ -40,6 +42,7 @@ module.exports = {
   POSITION_LABELS,
   SIDES,
   SIDE_LABELS,
+  UNDECIDED_LABEL,
   MATCH_STATUS,
   MATCH_STATUS_LABELS,
   MIN_GAMES,

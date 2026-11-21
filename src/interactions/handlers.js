@@ -1,4 +1,4 @@
-const { MATCH_SIZE, POSITIONS } = require('../constants');
+const { MATCH_SIZE, POSITIONS, SIDES, SIDE_LABELS, UNDECIDED_LABEL } = require('../constants');
 const { UserError } = require('../utils/errors');
 const { positionLabel } = require('../utils/format');
 const { saveScreenshot, removeScreenshot } = require('../utils/screenshotStore');
@@ -40,7 +40,7 @@ function base(interaction, ctx, matchId = null) {
 }
 
 const handlers = {
-  /* ───────────── /대전 관리 패널 ───────────── */
+  /* ───────────── /계정 관리 패널 ───────────── */
 
   async [ACTIONS.PANEL_REGISTER](interaction, ctx) {
     const { reactivated } = ctx.services.accounts.register({
@@ -66,6 +66,8 @@ const handlers = {
       `👋 계정을 탈퇴했습니다.${leftMatchId ? ` 참가 중이던 대전 #${leftMatchId}에서도 빠졌습니다.` : ''}`,
     );
   },
+
+  /* ───────────── /대전 관리 패널 ───────────── */
 
   async [ACTIONS.PANEL_CREATE](interaction, ctx) {
     ctx.services.matches.checkCanCreate(base(interaction, ctx));
@@ -160,7 +162,31 @@ const handlers = {
     return interaction.update({
       content: position
         ? `🎯 이번 대전 포지션: **${positionLabel(position)}**`
-        : '🎯 포지션 선택을 해제했습니다.',
+        : `🎯 이번 대전 포지션: **${UNDECIDED_LABEL}**`,
+      components: [],
+    });
+  },
+
+  async [ACTIONS.TEAM](interaction, ctx, [matchId]) {
+    const member = ctx.services.accounts.getActiveMember(ctx.guild.id, interaction.user.id);
+    const match = ctx.services.matches.requireActiveMatchById(ctx.guild.id, matchId);
+    ctx.services.matches.requireRecruiting(match);
+    const participant = ctx.services.matches.requireParticipant(match, member.id);
+    // 셔플로 배정된 팀은 직접 고른 팀이 아니므로 미정으로 보여준다.
+    const view = ctx.services.matches.getMatchView(match.id);
+    const me = view.participants.find((p) => p.id === participant.id);
+    return interaction.reply(views.teamSelect(match.id, me?.is_team_locked ? me.side : null));
+  },
+
+  async [ACTIONS.TEAM_SELECT](interaction, ctx, [matchId]) {
+    const value = interaction.values[0];
+    const side = SIDES.includes(value) ? value : null;
+    const { match } = ctx.services.teams.setTeam({ ...base(interaction, ctx, matchId), side });
+    await refreshMatchMessage(ctx.client, ctx.services, match.id);
+    return interaction.update({
+      content: side
+        ? `👥 이번 대전 팀: **${SIDE_LABELS[side]}** (팀 셔플에서 제외됩니다)`
+        : `👥 이번 대전 팀: **${UNDECIDED_LABEL}** (팀 셔플로 정해집니다)`,
       components: [],
     });
   },
@@ -171,6 +197,14 @@ const handlers = {
   },
 
   /* ───────────── 관리 패널 (관리자 / 대전 등록자) ───────────── */
+
+  async [ACTIONS.SHUFFLE](interaction, ctx, [matchId]) {
+    const view = ctx.services.teams.shuffle(base(interaction, ctx, matchId));
+    await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
+    return interaction.update(
+      views.controlPanel(view, '🎲 팀을 랜덤으로 섞었습니다. 마음에 들지 않으면 다시 눌러 주세요.', [views.teamsEmbed(view)]),
+    );
+  },
 
   async [ACTIONS.START](interaction, ctx, [matchId]) {
     const view = ctx.services.matches.start(base(interaction, ctx, matchId));
