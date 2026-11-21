@@ -21,7 +21,9 @@ const {
   POSITION_LABELS,
   MATCH_STATUS,
   MATCH_STATUS_LABELS,
+  SIDE_LABELS,
   TEAM_SIZE,
+  UNDECIDED_LABEL,
 } = require('../constants');
 const { COLORS, mention, positionLabel } = require('../utils/format');
 const { ACTIONS, buildId } = require('./ids');
@@ -127,18 +129,33 @@ function gameNameModal(customId, title, defaultValue) {
 
 /* ───────────── 공개 대전 정보 메시지 ───────────── */
 
-function participantLines(participants, { detail = false } = {}) {
-  if (participants.length === 0) return '아직 참가자가 없습니다.';
-  return participants
-    .map((p, i) => {
-      const parts = [`**${i + 1}.** ${mention(p.discord_user_id)}`];
-      if (detail) {
-        parts.push(`\`${positionLabel(p.position)}\``);
-        parts.push(p.game_name ? `🎮 ${p.game_name}` : '🎮 아이디 미입력');
-      }
-      return parts.join(' · ');
-    })
-    .join('\n');
+/** 1팀 / 2팀 / 미정으로 나눈 참가자 필드 */
+function teamFields(view, { detail = false } = {}) {
+  const groups = [
+    { name: `🔴 ${SIDE_LABELS.RED}`, list: view.red, max: TEAM_SIZE },
+    { name: `🔵 ${SIDE_LABELS.BLUE}`, list: view.blue, max: TEAM_SIZE },
+    { name: `⚪ ${UNDECIDED_LABEL}`, list: view.unassigned, max: null },
+  ];
+  return groups
+    .filter((g) => g.max !== null || g.list.length > 0)
+    .map((g) => ({
+      name: `${g.name} (${g.list.length}${g.max ? `/${g.max}` : ''})`,
+      value: g.list.length
+        ? g.list
+            .map((p) => {
+              const parts = [mention(p.discord_user_id)];
+              if (detail) {
+                parts.push(`\`${positionLabel(p.position)}\``);
+                parts.push(p.game_name ? `🎮 ${p.game_name}` : '🎮 아이디 미입력');
+              }
+              if (p.is_team_locked) parts.push('📌');
+              return parts.join(' · ');
+            })
+            .join('\n')
+            .slice(0, 1024)
+        : '-',
+      inline: !detail,
+    }));
 }
 
 function matchSummaryFields(view) {
@@ -151,7 +168,8 @@ function matchSummaryFields(view) {
   if (match.status !== MATCH_STATUS.RECRUITING) {
     fields.push({ name: '기록된 판', value: `${games.length}/${match.game_count}판`, inline: true });
   }
-  fields.push({ name: `참가자 (${participants.length}/${MATCH_SIZE})`, value: participantLines(participants) });
+  fields.push({ name: `참가자 (${participants.length}/${MATCH_SIZE})`, value: '팀별로 표시합니다. (📌 = 팀 직접 선택)' });
+  fields.push(...teamFields(view));
   return fields;
 }
 
@@ -184,6 +202,7 @@ function matchPublicMessage(view) {
     button(buildId(ACTIONS.LEAVE, match.id), '대전 탈퇴', ButtonStyle.Danger, '🚪').setDisabled(!recruiting),
     button(buildId(ACTIONS.VIEW, match.id), '대전 조회', ButtonStyle.Secondary, '🔎'),
     button(buildId(ACTIONS.POSITION, match.id), '포지션 등록/변경', ButtonStyle.Secondary, '🎯').setDisabled(!recruiting),
+    button(buildId(ACTIONS.TEAM, match.id), '팀 등록/변경', ButtonStyle.Secondary, '👥').setDisabled(!recruiting),
   );
   const row2 = new ActionRowBuilder().addComponents(
     button(buildId(ACTIONS.MANAGE, match.id), '대전 관리', ButtonStyle.Primary, '🛠️'),
@@ -202,11 +221,9 @@ function matchDetailEmbed(view) {
       { name: '판 수', value: `${match.game_count}판`, inline: true },
       { name: '상태', value: MATCH_STATUS_LABELS[match.status], inline: true },
       { name: '기록된 판', value: `${games.length}/${match.game_count}판`, inline: true },
-      {
-        name: `참가자 (${participants.length}/${MATCH_SIZE}) · 포지션 · 롤 아이디`,
-        value: participantLines(participants, { detail: true }),
-      },
-    );
+    )
+    .setDescription(`참가자 **${participants.length}/${MATCH_SIZE}**명 · 포지션 · 롤 아이디 (📌 = 팀 직접 선택)`)
+    .addFields(teamFields(view, { detail: true }));
   return embed;
 }
 
@@ -228,7 +245,7 @@ function positionSelect(matchId, current) {
         value,
         default: current === value,
       })),
-      { label: '선택 해제', value: 'NONE' },
+      { label: UNDECIDED_LABEL, value: 'NONE', description: '포지션을 정하지 않음 (기본값)', default: !current },
     ]);
   return {
     content: `🎯 이번 대전의 포지션을 골라 주세요. (현재: **${positionLabel(current)}**)`,
@@ -238,7 +255,34 @@ function positionSelect(matchId, current) {
 
 /* ───────────── 관리 패널 (관리자 / 대전 등록자, 본인만) ───────────── */
 
-function controlPanel(view, notice = null) {
+/* ───────────── 팀 선택 (본인만) ───────────── */
+
+/** @param {'RED'|'BLUE'|null} current 직접 고른 팀 (셔플로 배정된 팀은 미정으로 본다) */
+function teamSelect(matchId, current) {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(buildId(ACTIONS.TEAM_SELECT, matchId))
+    .setPlaceholder('이번 대전에서 들어갈 팀')
+    .addOptions([
+      { label: SIDE_LABELS.RED, value: 'RED', description: `최대 ${TEAM_SIZE}명, 팀 셔플에서 제외`, default: current === 'RED' },
+      { label: SIDE_LABELS.BLUE, value: 'BLUE', description: `최대 ${TEAM_SIZE}명, 팀 셔플에서 제외`, default: current === 'BLUE' },
+      { label: UNDECIDED_LABEL, value: 'NONE', description: '팀 셔플로 정해짐 (기본값)', default: !current },
+    ]);
+  return {
+    content: `👥 이번 대전의 팀을 골라 주세요. (현재: **${current ? SIDE_LABELS[current] : UNDECIDED_LABEL}**)`,
+    components: [new ActionRowBuilder().addComponents(select)],
+  };
+}
+
+/** 1팀 / 2팀 구성 (팀 셔플 결과) */
+function teamsEmbed(view, title) {
+  return new EmbedBuilder()
+    .setTitle(title || `👥 대전 #${view.match.id} 팀 구성`)
+    .setColor(COLORS.BLUE)
+    .setDescription('포지션 · 롤 아이디 (📌 = 팀 직접 선택, 셔플에서 제외)')
+    .addFields(teamFields(view, { detail: true }));
+}
+
+function controlPanel(view, notice = null, embeds = []) {
   const { match, participants, games } = view;
   const recruiting = match.status === MATCH_STATUS.RECRUITING;
   const inProgress = match.status === MATCH_STATUS.IN_PROGRESS;
@@ -246,10 +290,15 @@ function controlPanel(view, notice = null) {
     `🛠️ **대전 #${match.id} 관리** · ${MATCH_STATUS_LABELS[match.status]}`,
     `참가자 ${participants.length}/${MATCH_SIZE}명 · 기록 ${games.length}/${match.game_count}판`,
   ];
-  if (recruiting && participants.length < MATCH_SIZE) lines.push(`대전 시작은 ${MATCH_SIZE}명이 모두 모여야 할 수 있습니다.`);
+  if (recruiting && participants.length < MATCH_SIZE) {
+    lines.push(`팀 랜덤 셔플과 대전 시작은 ${MATCH_SIZE}명이 모두 모여야 할 수 있습니다.`);
+  }
   if (notice) lines.unshift(notice, '');
 
   const row = new ActionRowBuilder().addComponents(
+    button(buildId(ACTIONS.SHUFFLE, match.id), '팀 랜덤 셔플', ButtonStyle.Secondary, '🎲').setDisabled(
+      !recruiting || participants.length !== MATCH_SIZE,
+    ),
     button(buildId(ACTIONS.START, match.id), '대전 시작', ButtonStyle.Success, '▶️').setDisabled(!recruiting),
     button(buildId(ACTIONS.RECORD, match.id), '대전 기록', ButtonStyle.Primary, '📸').setDisabled(
       !inProgress || games.length >= match.game_count,
@@ -258,7 +307,7 @@ function controlPanel(view, notice = null) {
     button(buildId(ACTIONS.CANCEL, match.id), '대전 취소', ButtonStyle.Secondary, '🛑').setDisabled(!recruiting && !inProgress),
   );
   const isActive = recruiting || inProgress;
-  return { content: lines.join('\n'), embeds: [], components: isActive ? [row] : [] };
+  return { content: lines.join('\n'), embeds, components: isActive ? [row] : [] };
 }
 
 /** 판 기록 입력창: 결과 캡쳐 + 이긴 사람 5명 */
@@ -338,6 +387,8 @@ module.exports = {
   matchDetailEmbed,
   matchMessageLink,
   positionSelect,
+  teamSelect,
+  teamsEmbed,
   controlPanel,
   recordModal,
   finishMessage,

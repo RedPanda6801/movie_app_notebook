@@ -4,6 +4,7 @@ const {
   POSITIONS,
   POSITION_LABELS,
   SIDE_LABELS,
+  UNDECIDED_LABEL,
   MATCH_STATUS_LABELS,
 } = require('../constants');
 
@@ -14,7 +15,7 @@ function mention(discordUserId) {
 }
 
 function positionLabel(position) {
-  return position ? POSITION_LABELS[position] : '포지션 미정';
+  return position ? POSITION_LABELS[position] : UNDECIDED_LABEL;
 }
 
 /** 포지션 순서(탑-정글-미드-원딜-서폿)로 정렬해서 한 줄씩 표시 */
@@ -44,7 +45,7 @@ function matchEmbed(view, title) {
       { name: `🔵 ${SIDE_LABELS.BLUE} (${blue.length})`, value: formatMembers(blue), inline: true },
     );
   if (unassigned.length > 0) {
-    embed.addFields({ name: `⚪ 팀 미배정 (${unassigned.length})`, value: formatMembers(unassigned) });
+    embed.addFields({ name: `⚪ 팀 ${UNDECIDED_LABEL} (${unassigned.length})`, value: formatMembers(unassigned) });
   }
   if (games.length > 0) {
     embed.addFields({
@@ -63,7 +64,7 @@ function matchEmbed(view, title) {
 function participantsEmbed(view, title) {
   const { match, participants } = view;
   const lines = participants.map((p, i) => {
-    const team = p.side ? `${p.side === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[p.side]}${p.is_team_locked ? ' 📌' : ''}` : '⚪ 팀 미배정';
+    const team = p.side ? `${p.side === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[p.side]}${p.is_team_locked ? ' 📌' : ''}` : `⚪ 팀 ${UNDECIDED_LABEL}`;
     const gameName = p.game_name ? ` · 🎮 ${p.game_name}` : '';
     return `**${i + 1}.** ${mention(p.discord_user_id)} · \`${positionLabel(p.position)}\` · ${team}${gameName}`;
   });

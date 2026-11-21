@@ -8,9 +8,9 @@ const { shuffleTeams } = require('./shuffle');
 function createTeamService(repos, accounts, matches, random = Math.random) {
   const { participants, transaction } = repos;
 
-  function context(guildId, discordUserId) {
+  function context(guildId, discordUserId, matchId = null) {
     const member = accounts.getActiveMember(guildId, discordUserId);
-    const match = matches.requireActiveMatch(guildId);
+    const match = matches.requireActiveMatchById(guildId, matchId);
     matches.requireRecruiting(match);
     const participant = matches.requireParticipant(match, member.id);
     return { member, match, participant };
@@ -44,10 +44,36 @@ function createTeamService(repos, accounts, matches, random = Math.random) {
     return { match };
   });
 
-  /** 팀 자동셔플: 참가자가 10명일 때만 사용할 수 있다. */
-  const shuffle = transaction(({ guildId, discordUserId }) => {
-    accounts.getActiveMember(guildId, discordUserId);
-    const match = matches.requireActiveMatch(guildId);
+  /**
+   * 팀 등록/변경 (버튼용): side = 'RED'(1팀) | 'BLUE'(2팀) | null(미정)
+   * - 팀을 고르면 셔플 대상에서 빠지고 그 팀에 고정된다.
+   * - 미정을 고르면 팀 배정이 풀리고 다시 셔플 대상이 된다.
+   */
+  const setTeam = transaction(({ guildId, discordUserId, matchId = null, side }) => {
+    if (side !== null && !SIDES.includes(side)) throw new UserError('알 수 없는 팀입니다.');
+    const { match, participant } = context(guildId, discordUserId, matchId);
+    if (side === null) {
+      if (participant.team_id) {
+        participants.unlockTeam(participant.id);
+        participants.resetShuffledByMatch(match.id);
+      }
+      return { match, side: null };
+    }
+    const team = matches.getTeams(match.id)[side];
+    if (participant.team_id === team.id && participant.is_team_locked) {
+      return { match, side }; // 이미 같은 팀
+    }
+    if (participants.countLockedByTeam(team.id) >= TEAM_SIZE) {
+      throw new UserError(`이 팀은 이미 ${TEAM_SIZE}명이 등록되어 있습니다.`);
+    }
+    participants.lockTeam(participant.id, team.id);
+    participants.resetShuffledByMatch(match.id);
+    return { match, side };
+  });
+
+  /** 팀 자동셔플: 관리자 또는 대전 등록자만, 참가자가 10명일 때만 사용할 수 있다. */
+  const shuffle = transaction(({ guildId, discordUserId, matchId = null, isAdmin = false }) => {
+    const match = matches.checkManager({ guildId, discordUserId, matchId, isAdmin });
     matches.requireRecruiting(match);
     const list = matches.getMatchView(match.id).participants;
     if (list.length !== MATCH_SIZE) {
@@ -70,7 +96,7 @@ function createTeamService(repos, accounts, matches, random = Math.random) {
     return matches.getMatchView(match.id);
   });
 
-  return { joinTeam, leaveTeam, shuffle };
+  return { joinTeam, leaveTeam, setTeam, shuffle };
 }
 
 module.exports = { createTeamService };

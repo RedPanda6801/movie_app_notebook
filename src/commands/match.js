@@ -7,7 +7,7 @@ const { refreshMatchMessage, postFinishMessage } = require('../interactions/matc
 const sideChoices = Object.entries(SIDE_LABELS).map(([value, name]) => ({ name, value }));
 const positionChoices = [
   ...POSITIONS.map((value) => ({ name: POSITION_LABELS[value], value })),
-  { name: '선택 해제', value: 'NONE' },
+  { name: '미정', value: 'NONE' },
 ];
 
 /**
@@ -84,7 +84,7 @@ module.exports = {
         const position = value === 'NONE' ? null : value;
         matches.setPosition({ ...base, position });
         return interaction.reply(
-          position ? `🎯 포지션: **${positionLabel(position)}**` : '🎯 포지션 선택을 해제했습니다.',
+          position ? `🎯 포지션: **${positionLabel(position)}**` : '🎯 포지션: **미정**',
         );
       }
 

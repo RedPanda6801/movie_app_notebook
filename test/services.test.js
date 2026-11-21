@@ -216,3 +216,48 @@ test('DB 제약: 서버당 활성 대전 1개, 판 번호 중복 불가', () => 
   db.prepare('INSERT INTO match_record (match_id, game_no) VALUES (?, 1)').run(lastInsertRowid);
   assert.throws(() => db.prepare('INSERT INTO match_record (match_id, game_no) VALUES (?, 1)').run(lastInsertRowid), /UNIQUE/);
 });
+
+test('팀 등록/변경 (버튼): 1팀 · 2팀 · 미정, 팀당 5명, 같은 팀 재선택은 그대로', () => {
+  const { services, guild, users, fill } = setup();
+  const match = fill();
+  const setTeam = (u, side) => services.teams.setTeam({ guildId: guild.id, discordUserId: u, matchId: match.id, side });
+  const sideOf = (u) => services.matches.getMatchView(match.id).participants.find((p) => p.discord_user_id === u);
+
+  // 기본값은 미정
+  assert.equal(sideOf(users[1]).side, null);
+  setTeam(users[1], 'RED');
+  assert.equal(sideOf(users[1]).side, 'RED');
+  assert.equal(sideOf(users[1]).is_team_locked, 1);
+  setTeam(users[1], 'RED'); // 같은 팀 다시 선택해도 오류 없음
+  setTeam(users[1], 'BLUE'); // 변경
+  assert.equal(sideOf(users[1]).side, 'BLUE');
+  setTeam(users[1], null); // 미정으로 되돌리기
+  assert.equal(sideOf(users[1]).side, null);
+  assert.equal(sideOf(users[1]).is_team_locked, 0);
+  setTeam(users[1], null); // 이미 미정이어도 오류 없음
+
+  users.slice(0, 5).forEach((u) => setTeam(u, 'RED'));
+  assert.throws(() => setTeam(users[5], 'RED'), isUserError(/이미 5명/));
+  assert.throws(() => setTeam(users[5], 'PURPLE'), isUserError(/알 수 없는 팀/));
+});
+
+test('팀 랜덤 셔플: 관리자/대전 등록자만, 10명일 때만, 직접 고른 팀은 유지', () => {
+  const { services, guild, users, register, create, join } = setup();
+  users.slice(0, 10).forEach((u) => register(u));
+  const match = create(users[0]);
+  users.slice(1, 9).forEach((u) => join(u));
+  const shuffle = (u, extra = {}) =>
+    services.teams.shuffle({ guildId: guild.id, discordUserId: u, matchId: match.id, ...extra });
+
+  assert.throws(() => shuffle(users[0]), isUserError(/10명/));
+  join(users[9]);
+  assert.throws(() => shuffle(users[1]), isUserError(/권한이 없습니다/));
+  services.teams.setTeam({ guildId: guild.id, discordUserId: users[3], matchId: match.id, side: 'BLUE' });
+
+  const view = shuffle(users[0]);
+  assert.equal(view.red.length, 5);
+  assert.equal(view.blue.length, 5);
+  assert.equal(view.unassigned.length, 0);
+  assert.ok(view.blue.some((p) => p.discord_user_id === users[3]));
+  shuffle('admin', { isAdmin: true }); // 관리자도 가능
+});

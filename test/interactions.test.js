@@ -174,10 +174,40 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.equal(calls[0].type, 'update');
   assert.match(textOf(calls[0].payload), /미드/);
 
+  // 포지션 선택 메뉴에 미정 옵션 (기본값)
+  calls = await send({ kind: 'button', user: 'u4', customId: 'match.position|1' });
+  const positionOptions = calls[0].payload.components[0].toJSON().components[0].options;
+  assert.deepEqual(positionOptions.map((o) => o.label), ['탑', '정글', '미드', '원딜', '서폿', '미정']);
+  assert.equal(positionOptions.find((o) => o.default)?.label, '미정');
+
+  // 팀 등록/변경: 1팀 · 2팀 · 미정
+  calls = await send({ kind: 'button', user: 'u2', customId: 'match.team|1' });
+  assert.ok(isEphemeral(calls[0].payload));
+  const teamOptions = calls[0].payload.components[0].toJSON().components[0].options;
+  assert.deepEqual(teamOptions.map((o) => o.label), ['1팀', '2팀', '미정']);
+  assert.equal(teamOptions.find((o) => o.default)?.label, '미정');
+  calls = await send({ kind: 'select', user: 'u2', customId: 'match.teamSelect|1', values: ['BLUE'] });
+  assert.equal(calls[0].type, 'update');
+  assert.match(textOf(calls[0].payload), /2팀/);
+  assert.match(JSON.stringify(matchMessage.payload.embeds[0].toJSON()), /2팀 \(1\/5\)/, '공개 메시지에 팀별 표시');
+
+  // 팀 랜덤 셔플: 등록자가 아니면 권한 없음
+  calls = await send({ kind: 'button', user: 'u5', customId: 'control.shuffle|1' });
+  assert.match(textOf(calls[0].payload), /권한이 없습니다/);
+  // 등록자의 관리 패널에서 셔플 → 1팀/2팀 구성 표시
+  calls = await send({ kind: 'button', user: 'u1', customId: 'control.shuffle|1' });
+  assert.equal(calls[0].type, 'update');
+  const shuffled = JSON.stringify(calls[0].payload.embeds[0].toJSON());
+  assert.match(shuffled, /1팀 \(5\/5\)/);
+  assert.match(shuffled, /2팀 \(5\/5\)/);
+  assert.ok(!/미정 \(/.test(shuffled), '셔플 후에는 미정 인원이 없다');
+  const blue = services.matches.getMatchView(1).blue.map((p) => p.discord_user_id);
+  assert.ok(blue.includes('u2'), '직접 고른 팀은 셔플에서 유지된다');
+
   // 대전 조회 (본인만, 포지션/아이디 표시)
   calls = await send({ kind: 'button', user: 'u3', customId: 'match.view|1' });
   assert.ok(isEphemeral(calls[0].payload));
-  assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /미드.*u2#KR1/);
+  assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /u2>.*미드.*u2#KR1/);
 
   // 대전 관리: 일반 참가자는 권한 없음, 관리자/등록자는 가능
   calls = await send({ kind: 'button', user: 'u5', customId: 'match.manage|1' });
