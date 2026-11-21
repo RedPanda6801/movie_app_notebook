@@ -117,7 +117,21 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'command', user: 'admin', admin: true, command: '대전', sub: '관리' });
   assert.equal(calls[0].type, 'reply');
   assert.ok(!isEphemeral(calls[0].payload), '패널은 모두에게 보여야 한다');
-  assert.equal(calls[0].payload.components.length, 2);
+  assert.equal(calls[0].payload.components.length, 1);
+  const matchPanelButtons = calls[0].payload.components[0].toJSON().components.map((c) => c.label);
+  assert.deepEqual(matchPanelButtons, ['대전 등록', '진행중인 대전 조회'], '대전 패널에는 계정 버튼이 없다');
+
+  // 계정이 없으면 대전 등록 불가 → 계정관리 채널 안내
+  calls = await send({ kind: 'button', user: 'u1', customId: 'panel.create' });
+  assert.match(textOf(calls[0].payload), /계정관리 채널에서 \[계정 등록\]/);
+
+  // 관리자가 계정관리 채널에서 /계정 관리 → 모두에게 보이는 계정 패널
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '계정', sub: '관리' });
+  assert.ok(!isEphemeral(calls[0].payload), '계정 패널은 모두에게 보여야 한다');
+  const accountButtons = calls[0].payload.components[0].toJSON().components.map((c) => c.label);
+  assert.deepEqual(accountButtons, ['계정 등록', '계정 탈퇴']);
+  calls = await send({ kind: 'command', user: 'u1', command: '계정', sub: '관리' });
+  assert.match(textOf(calls[0].payload), /권한이 없습니다/);
 
   // 계정 등록 (본인만 보임)
   for (const u of users) {

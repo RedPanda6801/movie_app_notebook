@@ -40,7 +40,7 @@ function base(interaction, ctx, matchId = null) {
 }
 
 const handlers = {
-  /* ───────────── /대전 관리 패널 ───────────── */
+  /* ───────────── /계정 관리 패널 ───────────── */
 
   async [ACTIONS.PANEL_REGISTER](interaction, ctx) {
     const { reactivated } = ctx.services.accounts.register({
@@ -66,6 +66,8 @@ const handlers = {
       `👋 계정을 탈퇴했습니다.${leftMatchId ? ` 참가 중이던 대전 #${leftMatchId}에서도 빠졌습니다.` : ''}`,
     );
   },
+
+  /* ───────────── /대전 관리 패널 ───────────── */
 
   async [ACTIONS.PANEL_CREATE](interaction, ctx) {
     ctx.services.matches.checkCanCreate(base(interaction, ctx));

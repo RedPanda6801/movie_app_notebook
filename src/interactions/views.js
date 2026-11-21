@@ -39,6 +39,29 @@ function button(customId, label, style = ButtonStyle.Secondary, emoji = null) {
   return b;
 }
 
+/* ───────────── /계정 관리 패널 (모두에게 보임) ───────────── */
+
+function accountPanelMessage() {
+  const embed = new EmbedBuilder()
+    .setTitle('👤 계정 관리')
+    .setColor(COLORS.GREEN)
+    .setDescription(
+      [
+        '내전에 참가하려면 먼저 이 서버에 계정을 등록해야 합니다.',
+        '',
+        '✅ **[계정 등록]** 이 서버에 계정을 등록합니다.',
+        '👋 **[계정 탈퇴]** 계정을 탈퇴합니다. (기록은 남고, 다시 등록하면 이어집니다)',
+        '',
+        '버튼을 누른 결과는 누른 사람에게만 보입니다.',
+      ].join('\n'),
+    );
+  const row = new ActionRowBuilder().addComponents(
+    button(ACTIONS.PANEL_REGISTER, '계정 등록', ButtonStyle.Success, '✅'),
+    button(ACTIONS.PANEL_WITHDRAW, '계정 탈퇴', ButtonStyle.Danger, '👋'),
+  );
+  return { embeds: [embed], components: [row] };
+}
+
 /* ───────────── /대전 관리 패널 (모두에게 보임) ───────────── */
 
 function panelMessage() {
@@ -49,24 +72,18 @@ function panelMessage() {
       [
         '아래 버튼으로 내전을 등록하고 참가할 수 있습니다.',
         '',
-        '1️⃣ 처음이라면 **[계정 등록]**을 먼저 눌러 주세요.',
+        '1️⃣ 처음이라면 계정관리 채널에서 **[계정 등록]**을 먼저 눌러 주세요.',
         '2️⃣ **[대전 등록]**으로 판 수를 정해 대전을 엽니다. (서버당 1개)',
         '3️⃣ 대전 정보 메시지의 **[대전 참가]**로 롤 아이디를 입력하고 참가합니다.',
         '',
         '버튼을 누른 결과는 누른 사람에게만 보입니다.',
       ].join('\n'),
     );
-  const rows = [
-    new ActionRowBuilder().addComponents(
-      button(ACTIONS.PANEL_CREATE, '대전 등록', ButtonStyle.Primary, '📝'),
-      button(ACTIONS.PANEL_ACTIVE, '진행중인 대전 조회', ButtonStyle.Secondary, '🔎'),
-    ),
-    new ActionRowBuilder().addComponents(
-      button(ACTIONS.PANEL_REGISTER, '계정 등록', ButtonStyle.Success, '✅'),
-      button(ACTIONS.PANEL_WITHDRAW, '계정 탈퇴', ButtonStyle.Danger, '👋'),
-    ),
-  ];
-  return { embeds: [embed], components: rows };
+  const row = new ActionRowBuilder().addComponents(
+    button(ACTIONS.PANEL_CREATE, '대전 등록', ButtonStyle.Primary, '📝'),
+    button(ACTIONS.PANEL_ACTIVE, '진행중인 대전 조회', ButtonStyle.Secondary, '🔎'),
+  );
+  return { embeds: [embed], components: [row] };
 }
 
 /* ───────────── 대전 등록: 판 수 선택 → 롤 아이디 입력 ───────────── */
@@ -313,6 +330,7 @@ function finishMessage(view) {
 }
 
 module.exports = {
+  accountPanelMessage,
   panelMessage,
   gameCountSelect,
   gameNameModal,

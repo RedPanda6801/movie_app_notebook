@@ -3,11 +3,12 @@
  * 대전 관련 버튼에는 대전 ID를 넣어, 끝난 대전의 옛 메시지 버튼을 구분한다.
  */
 const ACTIONS = {
+  // /계정 관리 패널
+  PANEL_REGISTER: 'panel.register',
+  PANEL_WITHDRAW: 'panel.withdraw',
   // /대전 관리 패널
   PANEL_CREATE: 'panel.create',
   PANEL_ACTIVE: 'panel.active',
-  PANEL_REGISTER: 'panel.register',
-  PANEL_WITHDRAW: 'panel.withdraw',
   // 대전 등록 과정
   CREATE_GAMES: 'create.games', // 판 수 선택 메뉴
   CREATE_MODAL: 'create.modal', // 등록자 롤 아이디 입력창 |<판 수>
