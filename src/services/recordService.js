@@ -50,8 +50,10 @@ function aggregateByMember(rows) {
       assists: 0,
       cs: 0,
       stat_games: 0,
+      champions: [],
     };
     cur.games += 1;
+    if (r.champion) cur.champions.push(r.champion);
     cur.wins += r.is_win ? 1 : 0;
     if (r.kills != null) {
       cur.kills += r.kills;

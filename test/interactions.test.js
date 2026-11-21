@@ -159,6 +159,12 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'button', user: 'u2', customId: 'panel.create' });
   assert.match(textOf(calls[0].payload), /하나만/);
 
+  // 참가 입력창에서 포지션을 미리 고를 수 있다 (기본값 미정)
+  calls = await send({ kind: 'button', user: 'u3', customId: 'match.join|1' });
+  const joinModal = calls[0].payload.toJSON();
+  assert.equal(joinModal.components[1].component.custom_id, 'position');
+  assert.equal(joinModal.components[1].component.options.find((o) => o.default)?.label, '미정');
+
   // 롤 아이디를 잘못 입력하면 본인에게 형식 안내 (참가되지 않음)
   calls = await send({ kind: 'modal', user: 'u2', customId: 'match.joinModal|1', fields: { gameName: '드므드므드#KR!' } });
   assert.equal(calls[0].type, 'reply');
@@ -170,7 +176,12 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   for (const u of users.slice(1)) {
     calls = await send({ kind: 'button', user: u, customId: 'match.join|1' });
     assert.equal(calls[0].type, 'showModal');
-    calls = await send({ kind: 'modal', user: u, customId: 'match.joinModal|1', fields: { gameName: `lol${u}#KR1` } });
+    calls = await send({
+      kind: 'modal',
+      user: u,
+      customId: 'match.joinModal|1',
+      fields: { gameName: `lol${u}#KR1`, position: [u === 'u3' ? 'ADC' : 'NONE'] },
+    });
     assert.equal(calls[0].type, 'reply', '공개 메시지 갱신보다 응답이 먼저다 (3초 제한)');
     assert.match(textOf(calls[0].payload), /참가했습니다/);
     assert.ok(isEphemeral(calls[0].payload), '참가 알림은 본인만');
@@ -230,6 +241,10 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   calls = await send({ kind: 'button', user: 'u1', customId: 'control.start|1' });
   assert.equal(calls[0].type, 'update');
   assert.match(textOf(calls[0].payload), /대전을 시작했습니다/);
+  const shuffleButton = calls[0].payload.components[0].toJSON().components.find((c) => c.label === '팀 랜덤 셔플');
+  assert.ok(!shuffleButton.disabled, '대전 시작 후에도 팀 랜덤 셔플을 누를 수 있다');
+  calls = await send({ kind: 'button', user: 'u1', customId: 'control.shuffle|1' });
+  assert.match(textOf(calls[0].payload), /다음 판\(1판\)부터 이 팀으로 기록됩니다/);
 
   // 대전 기록: 버튼 → 캡쳐 + 승리팀 + 팀별 K/D/A/CS 입력창 (팀원 이름이 미리 채워진 양식)
   calls = await send({ kind: 'button', user: 'u1', customId: 'control.record|1' });
@@ -239,15 +254,18 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   const redTemplate = modal.components[2].component.value;
   const blueTemplate = modal.components[3].component.value;
   assert.equal(redTemplate.split('\n').length, 5);
-  assert.match(redTemplate, /^1\. .+ \(lol.+#KR1\) : 0\/0\/0\/0$/m);
-  const fillIn = (template, k) => template.replace(/0\/0\/0\/0/g, () => `${k}/1/2/150`);
+  assert.match(redTemplate, /^1\. .+ \(lol.+#KR1\) : 챔피언 0\/0\/0\/0$/m);
+  const recordCustomId = modal.custom_id;
+  assert.match(recordCustomId, /^control\.recordModal\|1\|1\|[0-9a-f]{8}$/, '팀 구성 서명 포함');
+  let champSeq = 0;
+  const fillIn = (template, k) => template.replace(/챔피언 0\/0\/0\/0/g, () => `챔피언${(champSeq += 1)} ${k}/1/2/150`);
 
   // 숫자를 덜 채우면 본인에게 안내 + 입력한 내용을 돌려준다
   const attachment = { url: 'https://cdn.example/r.png', name: 'r.png', contentType: 'image/png', size: 3 };
   calls = await send({
     kind: 'modal',
     user: 'u1',
-    customId: 'control.recordModal|1|1',
+    customId: recordCustomId,
     fields: {
       winnerSide: ['RED'],
       statsRED: redTemplate.split('\n').slice(0, 4).join('\n'),
@@ -255,20 +273,29 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
       screenshot: attachment,
     },
   });
-  assert.match(textOf(calls.at(-1).payload), /1팀 5번의 K\/D\/A\/CS가 입력되지 않았습니다/);
+  assert.match(textOf(calls.at(-1).payload), /1팀 1번의 챔피언을 입력해 주세요|1팀 5번의 K\/D\/A\/CS가 입력되지 않았습니다/);
   assert.match(textOf(calls.at(-1).payload), /붙여넣고 고쳐 주세요/);
 
   calls = await send({
     kind: 'modal',
     user: 'u1',
-    customId: 'control.recordModal|1|1',
-    fields: { winnerSide: ['RED'], statsRED: fillIn(redTemplate, 7), statsBLUE: fillIn(blueTemplate, 3), screenshot: attachment },
+    customId: recordCustomId,
+    fields: {
+      winnerSide: ['RED'],
+      statsRED: fillIn(redTemplate, 7).replace(/챔피언\d+ 7\/1\/2\/150/, '제라스 7/1/2/150'),
+      statsBLUE: fillIn(blueTemplate, 3),
+      screenshot: attachment,
+    },
   });
   assert.equal(calls[0].type, 'deferReply');
   assert.ok(isEphemeral(calls[0].payload));
   assert.match(textOf(calls[1].payload), /1판\*\* 결과를 기록했습니다/);
   const saved = path.join(tmp, 'records', 'guild-1', 'match-1-game-1.png');
   assert.ok(fs.existsSync(saved), '캡쳐가 저장되어야 한다');
+
+  // 피어리스: 진행 중 [대전 조회]에서 아이디(챔피언) 표시
+  calls = await send({ kind: 'button', user: 'u9', customId: 'match.view|1' });
+  assert.match(JSON.stringify(calls[0].payload.embeds[0].toJSON()), /🎮 lolu\d+#KR1\(제라스\)/);
 
   // 이미지가 아닌 파일은 거부
   calls = await send({
@@ -291,9 +318,12 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.match(finishText, /2판 중 \*\*1판\*\* 기록/);
   assert.match(finishText, /1팀 승리/);
   assert.match(finishText, /7\/1\/2/);
+  assert.match(finishText, /제라스/, '종료 알림에 챔피언 표시');
   assert.equal(matchMessage.payload.components.length, 0, '종료 후 공개 메시지 버튼은 사라진다');
 
   // 승점 반영 (판 1승 = 1점)
+  // 참가 입력창에서 고른 포지션이 저장된다
+  assert.equal(services.matches.getMatchView(1).participants.find((p) => p.discord_user_id === 'u3').position, 'ADC');
   const finalView = services.matches.getMatchView(1);
   const redUser = finalView.red[0].discord_user_id;
   const blueUser = finalView.blue[0].discord_user_id;
@@ -318,6 +348,7 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.match(matchStats, /참가자별 전적/);
   assert.match(matchStats, /1승 0패 \(100%\)/);
   assert.match(matchStats, /합계 7\/1\/2 · CS 150/);
+  assert.match(matchStats, /lolu\d+#KR1\(제라스\)/, '피어리스: 아이디(챔피언)');
   calls = await send({ kind: 'select', user: 'u7', customId: 'stats.gameSelect|1', values: ['1'] });
   assert.equal(calls[0].type, 'deferUpdate');
   const gameStats = calls[1].payload;
@@ -344,7 +375,8 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   const csv = all.files[0].attachment.toString('utf8');
   const csvLines = csv.trim().split('\r\n');
   assert.equal(csvLines.length, 11, '헤더 + 10명');
-  assert.match(csvLines[0], /대전,판,기록일시,디스코드ID,이름,롤아이디,팀,포지션,킬,데스,어시,CS,승패/);
+  assert.match(csvLines[0], /대전,판,기록일시,디스코드ID,이름,롤아이디,팀,포지션,챔피언,킬,데스,어시,CS,승패/);
+  assert.match(csv, /,제라스,7,1,2,150,승/);
   assert.match(csv, /,7,1,2,150,승/);
   assert.match(csv, /,3,1,2,150,패/);
 

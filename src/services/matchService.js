@@ -7,7 +7,9 @@ const {
   MIN_GAMES,
   MAX_GAMES,
 } = require('../constants');
+const { createHash } = require('node:crypto');
 const { UserError } = require('../utils/errors');
+const { normalizeChampion, championKey } = require('./statInput');
 
 /**
  * 롤 아이디(Riot ID) 형식: 게임이름#태그 (예: Hide on bush#KR1)
@@ -25,6 +27,22 @@ function normalizeGameName(gameName) {
   const value = `${parts[0].trim().replace(/\s+/g, ' ')}#${parts[1].trim()}`;
   if (!GAME_NAME_PATTERN.test(value)) throw new UserError(GAME_NAME_HELP);
   return value;
+}
+
+/** 포지션 값 검사 (null = 미정) */
+function normalizePosition(position) {
+  if (position == null || position === 'NONE') return null;
+  if (!POSITIONS.includes(position)) throw new UserError('알 수 없는 포지션입니다.');
+  return position;
+}
+
+/**
+ * 팀 구성 서명: 기록 입력창을 띄운 뒤 팀이 바뀌었는지(셔플 등) 확인하는 데 쓴다.
+ * 입력창 양식의 줄 순서가 팀 구성에 따라 정해지기 때문이다.
+ */
+function teamSignature(red, blue) {
+  const ids = `${red.map((p) => p.id).join(',')}|${blue.map((p) => p.id).join(',')}`;
+  return createHash('sha1').update(ids).digest('hex').slice(0, 8);
 }
 
 /**
@@ -110,6 +128,18 @@ function createMatchService(repos, accounts) {
     });
   }
 
+  /** 피어리스 표시용: 서버 회원별로 판 순서대로 플레이한 챔피언 목록 */
+  function championsByMember(games) {
+    const map = {};
+    for (const g of games) {
+      for (const p of g.players) {
+        if (!p.champion) continue;
+        (map[p.guild_member_id] ||= []).push(p.champion);
+      }
+    }
+    return map;
+  }
+
   /** 팀 구성이 1팀 5명 · 2팀 5명으로 끝났는지 */
   function requireFullTeams(list) {
     const red = list.filter((p) => p.side === 'RED');
@@ -131,6 +161,7 @@ function createMatchService(repos, accounts) {
     if (!match) return null;
     const list = participants.findByMatchWithDetails(matchId);
     const creator = list.find((p) => p.guild_member_id === match.created_by) || null;
+    const games = getGames(matchId);
     return {
       match,
       creatorDiscordUserId: creator?.discord_user_id ?? null,
@@ -138,7 +169,8 @@ function createMatchService(repos, accounts) {
       red: list.filter((p) => p.side === 'RED'),
       blue: list.filter((p) => p.side === 'BLUE'),
       unassigned: list.filter((p) => !p.side),
-      games: getGames(matchId),
+      games,
+      champions: championsByMember(games),
     };
   }
 
@@ -151,9 +183,11 @@ function createMatchService(repos, accounts) {
     return member;
   }
 
-  function addParticipant(match, member, gameName) {
-    participants.insert(match.id, member.id, gameName);
+  function addParticipant(match, member, gameName, position = null) {
+    const participantId = participants.insert(match.id, member.id, gameName);
+    if (position) participants.updatePosition(participantId, position);
     if (gameName) accountRepo.updateLastGameName(member.account_id, gameName);
+    accountRepo.updateLastPosition(member.account_id, position);
     participants.resetShuffledByMatch(match.id);
   }
 
@@ -161,17 +195,18 @@ function createMatchService(repos, accounts) {
    * 대전 등록: 판 수(1~10)를 정하고, 등록자는 자동으로 참가한다.
    * @returns {object} match
    */
-  const createMatch = transaction(({ guildId, discordUserId, channelId, gameCount, gameName }) => {
+  const createMatch = transaction(({ guildId, discordUserId, channelId, gameCount, gameName, position = null }) => {
     const count = Number(gameCount);
     if (!Number.isInteger(count) || count < MIN_GAMES || count > MAX_GAMES) {
       throw new UserError(`판 수는 ${MIN_GAMES}~${MAX_GAMES}판 중에서 골라 주세요.`);
     }
     const name = normalizeGameName(gameName);
+    const pos = normalizePosition(position);
     const member = checkCanCreate({ guildId, discordUserId });
     const matchId = matches.insert(guildId, channelId, member.id, count);
     for (const side of SIDES) teams.insert(matchId, side);
     const match = matches.findById(matchId);
-    addParticipant(match, member, name);
+    addParticipant(match, member, name, pos);
     return match;
   });
 
@@ -198,12 +233,15 @@ function createMatchService(repos, accounts) {
    * 대전 참가 (롤 아이디 입력). gameName을 생략하면 아이디 없이 참가한다. (관리자 커맨드용)
    * @returns {{ match: object, count: number }}
    */
-  const join = transaction(({ guildId, discordUserId, matchId = null, gameName = null, requireGameName = true }) => {
+  const join = transaction(
+    ({ guildId, discordUserId, matchId = null, gameName = null, position = null, requireGameName = true }) => {
     const name = gameName == null && !requireGameName ? null : normalizeGameName(gameName);
+    const pos = normalizePosition(position);
     const { member, match } = checkCanJoin({ guildId, discordUserId, matchId });
-    addParticipant(match, member, name);
+    addParticipant(match, member, name, pos);
     return { match, count: participants.countByMatch(match.id) };
-  });
+  },
+  );
 
   /** 대전 탈퇴 */
   const leave = transaction(({ guildId, discordUserId, matchId = null }) => {
@@ -260,7 +298,7 @@ function createMatchService(repos, accounts) {
     }
     const list = participants.findByMatchWithDetails(match.id);
     const { red, blue } = requireFullTeams(list);
-    return { match, gameNo: recorded + 1, participants: list, red, blue };
+    return { match, gameNo: recorded + 1, participants: list, red, blue, signature: teamSignature(red, blue) };
   }
 
   function recordedByMemberId(guildId, discordUserId) {
@@ -277,11 +315,29 @@ function createMatchService(repos, accounts) {
    * }} params
    */
   const recordGame = transaction(
-    ({ guildId, discordUserId, matchId = null, isAdmin = false, gameNo, winnerSide, stats, screenshotPath = null }) => {
+    ({
+      guildId,
+      discordUserId,
+      matchId = null,
+      isAdmin = false,
+      gameNo,
+      signature = null,
+      winnerSide,
+      stats,
+      screenshotPath = null,
+    }) => {
       if (!SIDES.includes(winnerSide)) throw new UserError('승리팀을 골라 주세요.');
-      const { match, gameNo: expected, red, blue } = checkCanRecord({ guildId, discordUserId, matchId, isAdmin });
+      const { match, gameNo: expected, red, blue, signature: current } = checkCanRecord({
+        guildId,
+        discordUserId,
+        matchId,
+        isAdmin,
+      });
       if (gameNo != null && Number(gameNo) !== expected) {
         throw new UserError(`${gameNo}판은 이미 기록되었습니다. 다시 [대전 기록]을 눌러 주세요.`);
+      }
+      if (signature != null && signature !== current) {
+        throw new UserError('입력창을 연 뒤 팀 구성이 바뀌었습니다. (팀 셔플 등) 다시 [대전 기록]을 눌러 주세요.');
       }
       const players = [...red, ...blue];
       const byParticipant = new Map((stats || []).map((s) => [Number(s.participantId), s]));
@@ -294,6 +350,18 @@ function createMatchService(repos, accounts) {
       }
       if (byParticipant.size !== players.length) {
         throw new UserError('대전 참가자만 기록할 수 있습니다.');
+      }
+      // 챔피언: 필수, 한 판 안에서는 같은 챔피언을 두 명이 할 수 없다.
+      const seen = new Map();
+      for (const p of players) {
+        const champion = normalizeChampion(byParticipant.get(p.id).champion);
+        if (!champion) throw new UserError('참가자 10명의 챔피언을 모두 입력해 주세요.');
+        const key = championKey(champion);
+        if (seen.has(key)) {
+          throw new UserError(`한 판에서 같은 챔피언(${champion})을 두 명이 할 수 없습니다. 챔피언을 확인해 주세요.`);
+        }
+        seen.set(key, p);
+        byParticipant.get(p.id).champion = champion;
       }
 
       const recordId = records.insert({
@@ -311,6 +379,7 @@ function createMatchService(repos, accounts) {
           side: p.side,
           gameName: p.game_name,
           position: p.position,
+          champion: st.champion,
           kills: st.kills,
           deaths: st.deaths,
           assists: st.assists,
@@ -362,4 +431,4 @@ function createMatchService(repos, accounts) {
   };
 }
 
-module.exports = { createMatchService, normalizeGameName };
+module.exports = { createMatchService, normalizeGameName, normalizePosition, teamSignature };

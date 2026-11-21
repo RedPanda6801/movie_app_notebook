@@ -109,7 +109,12 @@ function gameCountSelect() {
 }
 
 /** 롤 아이디 입력창 (대전 등록 / 대전 참가 공용) */
-function gameNameModal(customId, title, defaultValue) {
+/**
+ * 참가 입력창 (대전 등록 / 대전 참가 공용): 롤 아이디 + 포지션 미리 선택
+ * @param {string|null} defaultName 마지막으로 입력한 롤 아이디
+ * @param {string|null} defaultPosition 마지막으로 고른 포지션 (null = 미정)
+ */
+function gameNameModal(customId, title, defaultValue, defaultPosition = null) {
   const input = new TextInputBuilder()
     .setCustomId('gameName')
     .setStyle(TextInputStyle.Short)
@@ -126,7 +131,30 @@ function gameNameModal(customId, title, defaultValue) {
         .setLabel('롤 아이디')
         .setDescription('대전에서 사용할 롤 아이디를 입력해 주세요.')
         .setTextInputComponent(input),
+      new LabelBuilder()
+        .setLabel('포지션')
+        .setDescription('이번 대전에서 맡을 포지션 (참가 후에도 바꿀 수 있습니다)')
+        .setStringSelectMenuComponent(
+          new StringSelectMenuBuilder()
+            .setCustomId('position')
+            .setMinValues(1)
+            .setMaxValues(1)
+            .addOptions([
+              ...POSITIONS.map((value) => ({
+                label: POSITION_LABELS[value],
+                value,
+                default: defaultPosition === value,
+              })),
+              { label: UNDECIDED_LABEL, value: 'NONE', default: !defaultPosition },
+            ]),
+        ),
     );
+}
+
+/** 피어리스: 판 순서대로 플레이한 챔피언 (예: 제라스 - 룰루) */
+function championText(view, p) {
+  const list = view.champions?.[p.guild_member_id];
+  return list && list.length ? list.join(' - ') : null;
 }
 
 /* ───────────── 공개 대전 정보 메시지 ───────────── */
@@ -148,7 +176,10 @@ function teamFields(view, { detail = false } = {}) {
               const parts = [mention(p.discord_user_id)];
               if (detail) {
                 parts.push(`\`${positionLabel(p.position)}\``);
-                parts.push(p.game_name ? `🎮 ${p.game_name}` : '🎮 아이디 미입력');
+                const champions = championText(view, p);
+                const name = p.game_name || '아이디 미입력';
+                // 피어리스: 아이디(1판 챔피언 - 2판 챔피언 ...)
+                parts.push(champions ? `🎮 ${name}(${champions})` : `🎮 ${name}`);
               }
               if (p.is_team_locked) parts.push('📌');
               return parts.join(' · ');
@@ -298,8 +329,9 @@ function controlPanel(view, notice = null, embeds = []) {
   if (notice) lines.unshift(notice, '');
 
   const row = new ActionRowBuilder().addComponents(
+    // 팀 랜덤 셔플은 대전 시작 후(진행 중)에도 판 사이에 다시 할 수 있다.
     button(buildId(ACTIONS.SHUFFLE, match.id), '팀 랜덤 셔플', ButtonStyle.Secondary, '🎲').setDisabled(
-      !recruiting || participants.length < 2,
+      !(recruiting || inProgress) || participants.length < 2,
     ),
     button(buildId(ACTIONS.START, match.id), '대전 시작', ButtonStyle.Success, '▶️').setDisabled(!recruiting),
     button(buildId(ACTIONS.RECORD, match.id), '대전 기록', ButtonStyle.Primary, '📸').setDisabled(
@@ -316,7 +348,7 @@ function controlPanel(view, notice = null, embeds = []) {
  * 판 기록 입력창: 결과 캡쳐 + 승리팀 + 팀별 K/D/A/CS
  * 팀별 입력칸에는 팀원 이름이 미리 채워진 양식이 들어가며, 숫자만 바꾸면 된다.
  */
-function recordModal(matchId, gameNo, red, blue) {
+function recordModal(matchId, gameNo, red, blue, signature = '') {
   const statInput = (customId, members) =>
     new TextInputBuilder()
       .setCustomId(customId)
@@ -325,7 +357,7 @@ function recordModal(matchId, gameNo, red, blue) {
       .setMaxLength(1000)
       .setValue(buildStatTemplate(members));
   return new ModalBuilder()
-    .setCustomId(buildId(ACTIONS.RECORD_MODAL, matchId, gameNo))
+    .setCustomId(buildId(ACTIONS.RECORD_MODAL, matchId, gameNo, signature))
     .setTitle(`${gameNo}판 결과 기록`)
     .addLabelComponents(
       new LabelBuilder()
@@ -349,12 +381,12 @@ function recordModal(matchId, gameNo, red, blue) {
             ]),
         ),
       new LabelBuilder()
-        .setLabel(`🔴 ${SIDE_LABELS.RED} 킬/데스/어시/CS`)
-        .setDescription('줄마다 숫자만 바꿔 주세요. 예) 1. 홍길동 : 5/2/10/180')
+        .setLabel(`🔴 ${SIDE_LABELS.RED} 챔피언 · 킬/데스/어시/CS`)
+        .setDescription('줄마다 챔피언과 숫자를 바꿔 주세요. 예) 1. 홍길동 : 제라스 5/2/10/180')
         .setTextInputComponent(statInput('statsRED', red)),
       new LabelBuilder()
-        .setLabel(`🔵 ${SIDE_LABELS.BLUE} 킬/데스/어시/CS`)
-        .setDescription('줄마다 숫자만 바꿔 주세요. 예) 1. 김철수 : 3/4/7/150')
+        .setLabel(`🔵 ${SIDE_LABELS.BLUE} 챔피언 · 킬/데스/어시/CS`)
+        .setDescription('줄마다 챔피언과 숫자를 바꿔 주세요. 예) 1. 김철수 : 룰루 3/4/7/150')
         .setTextInputComponent(statInput('statsBLUE', blue)),
     );
 }
@@ -386,7 +418,8 @@ function finishMessage(view) {
     .map((m) => {
       const s = m.summary;
       const kda = s.statGames ? ` · ${s.kills}/${s.deaths}/${s.assists} (KDA ${s.kda.toFixed(2)}) · CS ${s.cs}` : '';
-      return `${mention(m.discord_user_id)} **${s.points}점** (${s.wins}승 ${s.losses}패)${kda}`;
+      const champions = m.champions.length ? ` · ${m.champions.join(' - ')}` : '';
+      return `${mention(m.discord_user_id)} **${s.points}점** (${s.wins}승 ${s.losses}패)${kda}${champions}`;
     })
     .join('\n');
 

@@ -2,7 +2,7 @@
 function createGuildMemberRepository(db) {
   const stmts = {
     findByGuildAndDiscordUser: db.prepare(`
-      SELECT gm.*, a.discord_user_id, a.last_game_name
+      SELECT gm.*, a.discord_user_id, a.last_game_name, a.last_position
         FROM guild_member gm
         JOIN account a ON a.id = gm.account_id
        WHERE gm.guild_id = ? AND a.discord_user_id = ?`),

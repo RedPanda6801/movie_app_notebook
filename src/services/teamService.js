@@ -71,10 +71,12 @@ function createTeamService(repos, accounts, matches, random = Math.random) {
     return { match, side };
   });
 
-  /** 팀 자동셔플: 관리자 또는 대전 등록자만. 참가자가 10명이 안 되어도(2명 이상) 쓸 수 있다. */
+  /**
+   * 팀 자동셔플: 관리자 또는 대전 등록자만. 참가자가 10명이 안 되어도(2명 이상) 쓸 수 있다.
+   * 대전 시작 후(진행 중)에도 판 사이에 다시 섞을 수 있다. 판별 기록에는 그 판의 팀이 저장된다.
+   */
   const shuffle = transaction(({ guildId, discordUserId, matchId = null, isAdmin = false }) => {
     const match = matches.checkManager({ guildId, discordUserId, matchId, isAdmin });
-    matches.requireRecruiting(match);
     const list = matches.getMatchView(match.id).participants;
     if (list.length < MIN_SHUFFLE_SIZE) {
       throw new UserError(

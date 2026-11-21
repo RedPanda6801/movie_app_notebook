@@ -20,8 +20,8 @@ function createMatchRecordPlayerRepository(db) {
   const stmts = {
     insert: db.prepare(`
       INSERT INTO match_record_player
-        (record_id, guild_member_id, side, game_name, position, kills, deaths, assists, cs, is_win)
-      VALUES (@recordId, @guildMemberId, @side, @gameName, @position, @kills, @deaths, @assists, @cs, @isWin)`),
+        (record_id, guild_member_id, side, game_name, position, champion, kills, deaths, assists, cs, is_win)
+      VALUES (@recordId, @guildMemberId, @side, @gameName, @position, @champion, @kills, @deaths, @assists, @cs, @isWin)`),
     findByMatch: db.prepare(`
       SELECT ${DETAIL_COLUMNS}
         FROM match_record_player p
@@ -69,8 +69,8 @@ function createMatchRecordPlayerRepository(db) {
   };
 
   return {
-    /** @param {{recordId, guildMemberId, side, gameName, position, kills, deaths, assists, cs, isWin}} row */
-    insert: (row) => stmts.insert.run({ ...row, isWin: row.isWin ? 1 : 0 }),
+    /** @param {{recordId, guildMemberId, side, gameName, position, champion, kills, deaths, assists, cs, isWin}} row */
+    insert: (row) => stmts.insert.run({ champion: null, ...row, isWin: row.isWin ? 1 : 0 }),
     /** 대전의 모든 판 참가자 전적 (진행 중인 대전 포함) */
     findByMatch: (matchId) => stmts.findByMatch.all(matchId),
     getSummaryByMember: (guildMemberId) => stmts.getSummaryByMember.get(guildMemberId),

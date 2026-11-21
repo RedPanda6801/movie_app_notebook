@@ -22,9 +22,10 @@ function sideText(side) {
 }
 
 function kdaText(p) {
-  if (p.kills == null) return 'K/D/A -';
+  const champion = p.champion ? `**${p.champion}** ` : '';
+  if (p.kills == null) return `${champion}K/D/A -`;
   const kda = (p.kills + p.assists) / Math.max(1, p.deaths);
-  return `${p.kills}/${p.deaths}/${p.assists} (${kda.toFixed(2)}) · CS ${p.cs}`;
+  return `${champion}${p.kills}/${p.deaths}/${p.assists} (${kda.toFixed(2)}) · CS ${p.cs}`;
 }
 
 /** 전적 요약 한 줄: 2승 1패 (67%) · 평균 5.0/2.3/8.1 (KDA 5.70) · 평균 CS 180 */
@@ -131,7 +132,10 @@ function matchStatsMessage(data, gameNo = null) {
       .map((m) => {
         const s = m.summary;
         const total = s.statGames ? ` · 합계 ${s.kills}/${s.deaths}/${s.assists} · CS ${s.cs}` : '';
-        return `${SIDE_ICON[m.side] || '⚪'} ${mention(m.discord_user_id)} · ${summaryText(s)}${total}`;
+        // 피어리스: 아이디(1판 챔피언 - 2판 챔피언 ...)
+        const name = m.game_name || '아이디 미입력';
+        const who = m.champions.length ? `${name}(${m.champions.join(' - ')})` : name;
+        return `${mention(m.discord_user_id)} 🎮 ${who}\n　${summaryText(s)}${total}`;
       });
     const embed = new EmbedBuilder()
       .setTitle(`⚔️ 대전 #${match.id} 참가자별 전적`)
@@ -224,7 +228,7 @@ function csvCell(value) {
 
 /** 모든 계정의 판별 전적 CSV (엑셀에서 한글이 깨지지 않도록 BOM 포함) */
 function buildRecordsCsv(rows) {
-  const header = ['대전', '판', '기록일시', '디스코드ID', '이름', '롤아이디', '팀', '포지션', '킬', '데스', '어시', 'CS', '승패'];
+  const header = ['대전', '판', '기록일시', '디스코드ID', '이름', '롤아이디', '팀', '포지션', '챔피언', '킬', '데스', '어시', 'CS', '승패'];
   const lines = rows.map((r) =>
     [
       r.match_id,
@@ -235,6 +239,7 @@ function buildRecordsCsv(rows) {
       r.game_name,
       r.side ? SIDE_LABELS[r.side] : UNDECIDED_LABEL,
       r.position ? positionLabel(r.position) : UNDECIDED_LABEL,
+      r.champion,
       r.kills,
       r.deaths,
       r.assists,

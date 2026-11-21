@@ -5,6 +5,7 @@ function createAccountRepository(db) {
     insert: db.prepare('INSERT INTO account (discord_user_id, username) VALUES (?, ?)'),
     updateUsername: db.prepare('UPDATE account SET username = ? WHERE id = ?'),
     updateLastGameName: db.prepare('UPDATE account SET last_game_name = ? WHERE id = ?'),
+    updateLastPosition: db.prepare('UPDATE account SET last_position = ? WHERE id = ?'),
   };
 
   return {
@@ -15,6 +16,8 @@ function createAccountRepository(db) {
     updateUsername: (id, username) => stmts.updateUsername.run(username, id),
     /** 마지막으로 입력한 롤 아이디 (다음 참가 입력창의 기본값) */
     updateLastGameName: (id, gameName) => stmts.updateLastGameName.run(gameName, id),
+    /** 마지막으로 고른 포지션 (다음 참가 입력창의 기본값, null = 미정) */
+    updateLastPosition: (id, position) => stmts.updateLastPosition.run(position, id),
   };
 }
 

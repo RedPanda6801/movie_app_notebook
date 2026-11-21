@@ -38,6 +38,17 @@ async function resolveMatchChannel(interaction, match) {
   return resolveChannel(interaction);
 }
 
+/** 참가 입력창의 포지션 선택 값 (미정 = null) */
+function selectedPosition(interaction) {
+  let value = null;
+  try {
+    value = interaction.fields.getStringSelectValues('position')?.[0] ?? null;
+  } catch {
+    /* 포지션 칸이 없는 이전 입력창 */
+  }
+  return POSITIONS.includes(value) ? value : null;
+}
+
 function base(interaction, ctx, matchId = null) {
   return {
     guildId: ctx.guild.id,
@@ -103,6 +114,7 @@ const handlers = {
         buildId(ACTIONS.CREATE_MODAL, gameCount),
         `대전 등록 (${gameCount}판) - 롤 아이디`,
         member.last_game_name,
+        member.last_position,
       ),
     );
   },
@@ -115,6 +127,7 @@ const handlers = {
       channelId: interaction.channelId,
       gameCount: Number(gameCount),
       gameName: interaction.fields.getTextInputValue('gameName'),
+      position: selectedPosition(interaction),
     });
 
     let notice = `✅ **대전 #${match.id}**(${match.game_count}판)이 등록되었고, 자동으로 참가했습니다.`;
@@ -132,14 +145,20 @@ const handlers = {
   async [ACTIONS.JOIN](interaction, ctx, [matchId]) {
     const { member, match } = ctx.services.matches.checkCanJoin(base(interaction, ctx, matchId));
     return interaction.showModal(
-      views.gameNameModal(buildId(ACTIONS.JOIN_MODAL, match.id), `대전 #${match.id} 참가`, member.last_game_name),
+      views.gameNameModal(
+        buildId(ACTIONS.JOIN_MODAL, match.id),
+        `대전 #${match.id} 참가`,
+        member.last_game_name,
+        member.last_position,
+      ),
     );
   },
 
   async [ACTIONS.JOIN_MODAL](interaction, ctx, [matchId]) {
     const gameName = interaction.fields.getTextInputValue('gameName');
-    const { match, count } = ctx.services.matches.join({ ...base(interaction, ctx, matchId), gameName });
-    const lines = [`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE})`];
+    const position = selectedPosition(interaction);
+    const { match, count } = ctx.services.matches.join({ ...base(interaction, ctx, matchId), gameName, position });
+    const lines = [`🙋 대전 #${match.id}에 참가했습니다. (${count}/${MATCH_SIZE}) · 포지션: **${positionLabel(position)}**`];
     if (count === MATCH_SIZE) lines.push('🎉 10명이 모두 모였습니다! 관리자가 대전을 시작하면 진행됩니다.');
     lines.push('포지션과 팀은 대전 정보 메시지의 [포지션 등록/변경] · [팀 등록/변경] 버튼으로 정할 수 있습니다.');
     await interaction.reply(lines.join('\n'));
@@ -211,7 +230,13 @@ const handlers = {
   async [ACTIONS.SHUFFLE](interaction, ctx, [matchId]) {
     const view = ctx.services.teams.shuffle(base(interaction, ctx, matchId));
     await interaction.update(
-      views.controlPanel(view, '🎲 팀을 랜덤으로 섞었습니다. 마음에 들지 않으면 다시 눌러 주세요.', [views.teamsEmbed(view)]),
+      views.controlPanel(
+        view,
+        view.match.status === 'IN_PROGRESS'
+          ? `🎲 팀을 다시 섞었습니다. 다음 판(${view.games.length + 1}판)부터 이 팀으로 기록됩니다.`
+          : '🎲 팀을 랜덤으로 섞었습니다. 마음에 들지 않으면 다시 눌러 주세요.',
+        [views.teamsEmbed(view)],
+      ),
     );
     await refreshMatchMessage(ctx.client, ctx.services, view.match.id);
   },
@@ -223,17 +248,21 @@ const handlers = {
   },
 
   async [ACTIONS.RECORD](interaction, ctx, [matchId]) {
-    const { match, gameNo, red, blue } = ctx.services.matches.checkCanRecord(base(interaction, ctx, matchId));
-    return interaction.showModal(views.recordModal(match.id, gameNo, red, blue));
+    const { match, gameNo, red, blue, signature } = ctx.services.matches.checkCanRecord(base(interaction, ctx, matchId));
+    return interaction.showModal(views.recordModal(match.id, gameNo, red, blue, signature));
   },
 
-  async [ACTIONS.RECORD_MODAL](interaction, ctx, [matchId, gameNo]) {
+  async [ACTIONS.RECORD_MODAL](interaction, ctx, [matchId, gameNo, signature]) {
     // 캡쳐 다운로드가 3초를 넘을 수 있어 먼저 응답을 예약한다.
     await interaction.deferReply();
     const params = base(interaction, ctx, matchId);
-    const { gameNo: expected, red, blue } = ctx.services.matches.checkCanRecord(params);
+    const { gameNo: expected, red, blue, signature: current } = ctx.services.matches.checkCanRecord(params);
     if (Number(gameNo) !== expected) {
       throw new UserError(`${gameNo}판은 이미 기록되었습니다. 다시 [대전 기록]을 눌러 주세요.`);
+    }
+    if (signature && signature !== current) {
+      // 입력창 양식의 줄 순서는 팀 구성 기준이라, 그 사이 셔플되면 다른 사람에게 기록될 수 있다.
+      throw new UserError('입력창을 연 뒤 팀 구성이 바뀌었습니다. (팀 셔플 등) 다시 [대전 기록]을 눌러 주세요.');
     }
     const winnerSide = interaction.fields.getStringSelectValues('winnerSide')[0];
     const redText = interaction.fields.getTextInputValue('statsRED');
@@ -265,7 +294,14 @@ const handlers = {
     });
     let result;
     try {
-      result = ctx.services.matches.recordGame({ ...params, gameNo: expected, winnerSide, stats, screenshotPath });
+      result = ctx.services.matches.recordGame({
+        ...params,
+        gameNo: expected,
+        signature: current,
+        winnerSide,
+        stats,
+        screenshotPath,
+      });
     } catch (err) {
       await removeScreenshot(screenshotPath);
       throw err;

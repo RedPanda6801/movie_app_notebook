@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS account (
     discord_user_id TEXT    NOT NULL UNIQUE,
     username        TEXT,
     last_game_name  TEXT,   -- 마지막으로 입력한 롤 아이디 (참가 입력창 기본값)
+    last_position   TEXT CHECK (last_position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')), -- 마지막으로 고른 포지션 (참가 입력창 기본값)
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS match_record_player (
     side            TEXT    CHECK (side IN ('RED', 'BLUE')),  -- 그 판의 팀 (1팀=RED, 2팀=BLUE)
     game_name       TEXT,   -- 그 판 당시 롤 아이디
     position        TEXT    CHECK (position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')),
+    champion        TEXT,   -- 그 판에 플레이한 챔피언 (피어리스: 대전 조회 시 판 순서대로 표시)
     kills           INTEGER CHECK (kills >= 0),
     deaths          INTEGER CHECK (deaths >= 0),
     assists         INTEGER CHECK (assists >= 0),

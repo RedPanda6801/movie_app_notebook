@@ -78,6 +78,17 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // v3 -> v4: 판별 챔피언(피어리스 표시용), 계정의 마지막 포지션(참가 입력창 기본값)
+    version: 4,
+    up(db) {
+      db.exec(`
+        ALTER TABLE match_record_player ADD COLUMN champion TEXT;
+        ALTER TABLE account ADD COLUMN last_position TEXT
+          CHECK (last_position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT'));
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));

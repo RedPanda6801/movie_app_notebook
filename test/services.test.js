@@ -99,9 +99,9 @@ function startWithTeams({ services, guild, users }) {
   return base;
 }
 
-/** 참가자 전원 K/D/A/CS (참가 id 기반으로 서로 다른 값) */
-function statsFor(list, f = (p) => ({ kills: p.id % 7, deaths: p.id % 3, assists: p.id % 5, cs: 100 + p.id })) {
-  return list.map((p) => ({ participantId: p.id, ...f(p) }));
+/** 참가자 전원 챔피언 + K/D/A/CS (참가 id 기반으로 서로 다른 값) */
+function statsFor(list, f = (p) => ({ kills: p.id % 7, deaths: p.id % 3, assists: p.id % 5, cs: 100 + p.id }), round = 1) {
+  return list.map((p) => ({ participantId: p.id, champion: `챔프${round}-${p.id}`, ...f(p) }));
 }
 
 test('대전 시작: 10명 + 1팀 5명 · 2팀 5명이어야 가능', () => {
@@ -160,7 +160,7 @@ test('판 기록: 승리팀 + 10명 K/D/A/CS 필수, 판 수만큼만, 팀/승�
     () => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'BLUE', stats: statsFor(all) }),
     isUserError(/이미 기록/),
   );
-  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'BLUE', stats: statsFor(all) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'BLUE', stats: statsFor(all, undefined, 2) });
   assert.throws(() => services.matches.checkCanRecord(base), isUserError(/모두 기록/));
 
   const { games } = services.matches.getMatchView(match.id);
@@ -169,8 +169,9 @@ test('판 기록: 승리팀 + 10명 K/D/A/CS 필수, 판 수만큼만, 팀/승�
   assert.equal(games[0].players.length, 10);
   const p = games[0].players.find((x) => x.guild_member_id === red[0].guild_member_id);
   assert.deepEqual(
-    { side: p.side, win: p.is_win, k: p.kills, d: p.deaths, a: p.assists, cs: p.cs, name: p.game_name },
+    { side: p.side, win: p.is_win, k: p.kills, d: p.deaths, a: p.assists, cs: p.cs, name: p.game_name, champ: p.champion },
     {
+      champ: `챔프1-${red[0].id}`,
       side: 'RED',
       win: 1,
       k: red[0].id % 7,
@@ -194,8 +195,8 @@ test('승점/전적: 판 1승당 1점, 종료된 대전만 반영, 서버별 계
   const all = [...red, ...blue];
   const fixed = () => ({ kills: 2, deaths: 1, assists: 3, cs: 100 });
   services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsFor(all, fixed) });
-  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'RED', stats: statsFor(all, fixed) });
-  services.matches.recordGame({ ...base, gameNo: 3, winnerSide: 'BLUE', stats: statsFor(all, fixed) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'RED', stats: statsFor(all, fixed, 2) });
+  services.matches.recordGame({ ...base, gameNo: 3, winnerSide: 'BLUE', stats: statsFor(all, fixed, 3) });
 
   const redUser = red[0].discord_user_id;
   const blueUser = blue[0].discord_user_id;
@@ -331,4 +332,89 @@ test('팀 랜덤 셔플: 관리자/대전 등록자만, 2명 이상이면 가능
   assert.equal(view.unassigned.length, 0);
   assert.ok(view.blue.some((p) => p.discord_user_id === users[3]));
   shuffle('admin', { isAdmin: true }); // 관리자도 가능
+});
+
+test('포지션 미리 선택: 참가/등록 시 함께 고르고, 마지막 포지션을 기억한다', () => {
+  const { services, guild, register, gameName } = setup();
+  register('u1');
+  register('u2');
+  const match = services.matches.createMatch({
+    guildId: guild.id,
+    discordUserId: 'u1',
+    channelId: 'c',
+    gameCount: 1,
+    gameName: gameName('u1'),
+    position: 'JUNGLE',
+  });
+  services.matches.join({ guildId: guild.id, discordUserId: 'u2', gameName: gameName('u2'), position: 'SUPPORT' });
+  assert.throws(
+    () => services.matches.join({ guildId: guild.id, discordUserId: 'u2', gameName: gameName('u2'), position: 'CARRY' }),
+    isUserError(/알 수 없는 포지션/),
+  );
+  const view = services.matches.getMatchView(match.id);
+  assert.deepEqual(view.participants.map((p) => p.position), ['JUNGLE', 'SUPPORT']);
+  assert.equal(services.accounts.getActiveMember(guild.id, 'u2').last_position, 'SUPPORT');
+  // 미정으로 참가하면 기억한 포지션도 미정이 된다
+  services.matches.leave({ guildId: guild.id, discordUserId: 'u2' });
+  services.matches.join({ guildId: guild.id, discordUserId: 'u2', gameName: gameName('u2'), position: null });
+  assert.equal(services.accounts.getActiveMember(guild.id, 'u2').last_position, null);
+});
+
+test('대전 시작 후에도 팀 랜덤 셔플 가능, 판별 기록에는 그 판의 팀이 저장된다', () => {
+  const ctx = setup();
+  const { services, guild, users, fill } = ctx;
+  const match = fill(2);
+  const base = startWithTeams(ctx);
+  const first = services.matches.checkCanRecord(base);
+  services.matches.recordGame({ ...base, gameNo: 1, signature: first.signature, winnerSide: 'RED', stats: statsFor([...first.red, ...first.blue]) });
+
+  // 진행 중 셔플: 판 사이에 팀을 다시 섞을 수 있다 (권한: 관리자/등록자)
+  assert.throws(() => services.teams.shuffle({ guildId: guild.id, discordUserId: users[5] }), isUserError(/권한/));
+  let second;
+  for (let i = 0; i < 20; i += 1) {
+    const view = services.teams.shuffle(base);
+    assert.equal(view.match.status, 'IN_PROGRESS');
+    assert.equal(view.red.length, 5);
+    second = services.matches.checkCanRecord(base);
+    if (second.signature !== first.signature) break;
+  }
+  assert.notEqual(second.signature, first.signature, '셔플로 팀이 바뀌면 서명이 달라진다');
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 2, signature: first.signature, winnerSide: 'RED', stats: statsFor([...second.red, ...second.blue], undefined, 2) }),
+    isUserError(/팀 구성이 바뀌었습니다/),
+  );
+  services.matches.recordGame({ ...base, gameNo: 2, signature: second.signature, winnerSide: 'RED', stats: statsFor([...second.red, ...second.blue], undefined, 2) });
+
+  const { games } = services.matches.getMatchView(match.id);
+  const sidesOf = (g) => Object.fromEntries(g.players.map((p) => [p.guild_member_id, p.side]));
+  assert.notDeepEqual(sidesOf(games[0]), sidesOf(games[1]), '판마다 그 판의 팀이 저장된다');
+});
+
+test('피어리스: 판별 챔피언 필수, 한 판 중복 불가, 대전 조회에 판 순서대로 표시', () => {
+  const ctx = setup();
+  const { services, users, fill } = ctx;
+  const match = fill(2);
+  const base = startWithTeams(ctx);
+  const { red, blue } = services.matches.checkCanRecord(base);
+  const all = [...red, ...blue];
+  const without = statsFor(all).map((st, i) => (i === 3 ? { ...st, champion: '  ' } : st));
+  assert.throws(() => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: without }), isUserError(/챔피언을 모두/));
+  const dup = statsFor(all).map((st, i) => (i === 7 ? { ...st, champion: ' 챔프1 - ' + all[0].id } : st));
+  const sameChamp = statsFor(all).map((st, i) => (i === 7 ? { ...st, champion: `챔프1-${all[0].id}` } : st));
+  assert.ok(dup);
+  assert.throws(
+    () => services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: sameChamp }),
+    isUserError(/같은 챔피언/),
+  );
+
+  const champ = (round) => (p) => (p.id === all[0].id ? (round === 1 ? '제라스' : '룰루') : `챔프${round}-${p.id}`);
+  const statsWith = (round) => all.map((p) => ({ participantId: p.id, champion: champ(round)(p), kills: 1, deaths: 1, assists: 1, cs: 10 }));
+  services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsWith(1) });
+  services.matches.recordGame({ ...base, gameNo: 2, winnerSide: 'BLUE', stats: statsWith(2) });
+
+  const view = services.matches.getMatchView(match.id);
+  assert.deepEqual(view.champions[all[0].guild_member_id], ['제라스', '룰루']);
+  const byMatch = services.records.getMatchRecords(1, match.id);
+  assert.deepEqual(byMatch.members.find((m) => m.discord_user_id === all[0].discord_user_id).champions, ['제라스', '룰루']);
+  assert.ok(users);
 });
