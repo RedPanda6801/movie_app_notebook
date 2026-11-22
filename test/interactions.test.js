@@ -39,7 +39,7 @@ function createFakeDiscord() {
   return { channel, client, sent };
 }
 
-function createHarness() {
+function createHarness({ scoreboardReader = null } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-e2e-'));
   const db = openDatabase(':memory:');
   const services = createServices(db);
@@ -52,6 +52,7 @@ function createHarness() {
     config,
     client: discord.client,
     fetchImpl: async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }),
+    scoreboardReader,
   });
 
   let interactionSeq = 0;
@@ -487,4 +488,97 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.match(log, /\[입력\] 계정 등록 - 롤 아이디 입력: lolu3#KR1 \| u3님/);
   assert.match(log, /\[입력\] 대전 참가 - 포지션 선택: ADC \| u3님/);
   assert.match(log, /\[버튼\] 대전 관리 \| u5님 .* \| 실패 \| ⚠️ 권한이 없습니다/);
+});
+
+test('관리자 데이터적재: 이미지를 자동으로 읽어 챔피언 · K/D/A를 채우고 [이대로 저장]', async () => {
+  // 가짜 이미지 인식기: 화면 위쪽(blue) = 2팀, 아래(red) = 1팀, blue 승리로 읽었다고 가정
+  let readCalls = 0;
+  let rosterSeen = null;
+  const reader = {
+    enabled: true,
+    model: 'claude-opus-5-5',
+    read: async ({ roster }) => {
+      readCalls += 1;
+      rosterSeen = roster;
+      return {
+        readable: true,
+        winning_side: 'blue',
+        notes: '',
+        model: 'claude-opus-5-5',
+        players: roster.map((r) => ({
+          scoreboard_side: r.no > 5 ? 'blue' : 'red',
+          name_on_screen: r.gameName,
+          roster_no: r.no,
+          champion: `챔프${r.no}`,
+          kills: r.no,
+          deaths: 2,
+          assists: 3,
+          cs: 150 + r.no,
+        })),
+      };
+    },
+  };
+  const { services, send } = createHarness({ scoreboardReader: reader });
+  const guild = services.guilds.ensureGuild('guild-1');
+  const users = Array.from({ length: 10 }, (_, i) => `v${i + 1}`);
+  users.forEach((u) => services.accounts.register({ guildId: guild.id, discordUserId: u, gameName: `player${u}#KR1`, displayName: u }));
+  const match = services.matches.createMatch({ guildId: guild.id, discordUserId: users[0], channelId: 'c', gameCount: 2 });
+  users.slice(1).forEach((u) => services.matches.join({ guildId: guild.id, discordUserId: u }));
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  services.teams.shuffle(base);
+  services.matches.start(base);
+  services.matches.finish(base);
+
+  const upload = { url: 'https://cdn.example/s.png', name: 's.png', contentType: 'image/png', size: 3 };
+  let calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: match.id, 판: 1, 이미지: upload } });
+  assert.equal(calls[0].type, 'deferReply');
+  assert.equal(readCalls, 1);
+  assert.equal(rosterSeen.length, 10);
+  const preview = calls[1].payload;
+  const previewText = JSON.stringify(preview.embeds[0].toJSON());
+  assert.match(previewText, /이미지를 읽어 아래처럼 채웠습니다/);
+  assert.match(previewText, /챔프1\*\* 1\/2\/3 · CS 151/);
+  const buttons = preview.components[0].toJSON().components;
+  assert.deepEqual(buttons.map((b) => b.label), ['이대로 저장', '수정 후 저장']);
+
+  // [수정 후 저장] 입력창은 인식한 값으로 채워져 있다
+  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: buttons[1].custom_id });
+  const modal = calls[0].payload.toJSON();
+  assert.equal(modal.components[0].component.options.find((o) => o.default)?.value, 'BLUE', '화면 blue = 2팀 승리');
+  assert.match(modal.components[1].component.value, /챔프\d+ \d+\/2\/3\/15\d/);
+
+  // [이대로 저장]
+  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: buttons[0].custom_id });
+  assert.equal(calls[0].type, 'deferReply');
+  assert.match(JSON.stringify(calls[1].payload.embeds[0].toJSON()), /데이터 적재 완료/);
+  const { games } = services.matches.getMatchView(match.id);
+  assert.equal(games.length, 1);
+  assert.equal(games[0].winnerSide, 'BLUE');
+  const p1 = games[0].players.find((p) => p.discord_user_id === 'v1');
+  assert.deepEqual([p1.champion, p1.kills, p1.deaths, p1.assists], [`챔프${rosterSeen.find((r) => r.gameName === 'playerv1#KR1').no}`, p1.kills, 2, 3]);
+  const blueUser = games[0].players.find((p) => p.side === 'BLUE').discord_user_id;
+  assert.equal(services.points.getStats(guild.id, blueUser).points, 1);
+
+  // 한 번 저장하면 같은 미리보기에서 다시 저장할 수 없다
+  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: buttons[0].custom_id });
+  assert.match(textOf(calls.at(-1).payload), /저장할 인식 결과가 없습니다/);
+});
+
+test('관리자 데이터적재: 자동 인식 실패 시 직접 입력으로 계속', async () => {
+  const reader = { enabled: true, model: 'm', read: async () => { const e = new Error('Claude API 사용량 한도에 걸렸습니다.'); e.name = 'ScoreboardReadError'; throw e; } };
+  const { services, send } = createHarness({ scoreboardReader: reader });
+  const guild = services.guilds.ensureGuild('guild-1');
+  const users = Array.from({ length: 10 }, (_, i) => `w${i + 1}`);
+  users.forEach((u) => services.accounts.register({ guildId: guild.id, discordUserId: u, gameName: `player${u}#KR1` }));
+  const match = services.matches.createMatch({ guildId: guild.id, discordUserId: users[0], channelId: 'c', gameCount: 1 });
+  users.slice(1).forEach((u) => services.matches.join({ guildId: guild.id, discordUserId: u }));
+  const base = { guildId: guild.id, discordUserId: users[0] };
+  services.teams.shuffle(base);
+  services.matches.start(base);
+  services.matches.finish(base);
+  const upload = { url: 'https://cdn.example/s.png', name: 's.png', contentType: 'image/png', size: 3 };
+  const calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: match.id, 판: 1, 이미지: upload } });
+  const preview = calls[1].payload;
+  assert.match(JSON.stringify(preview.embeds[0].toJSON()), /이미지 자동 인식 실패: Claude API 사용량 한도/);
+  assert.deepEqual(preview.components[0].toJSON().components.map((b) => b.label), ['전적 입력']);
 });

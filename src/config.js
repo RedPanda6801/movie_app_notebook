@@ -19,5 +19,8 @@ module.exports = {
   databasePath: process.env.DATABASE_PATH || 'data/bot.sqlite',
   logDir: process.env.LOG_DIR || 'logs',
   recordsDir: process.env.RECORDS_DIR || 'data/records',
+  // 데이터적재 이미지 자동 인식 (Claude API). 키가 없으면 꺼지고 직접 입력한다.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
+  scoreboardModel: process.env.SCOREBOARD_MODEL || 'claude-opus-5-5',
   logTimeZone: process.env.LOG_TIMEZONE || 'Asia/Seoul',
 };

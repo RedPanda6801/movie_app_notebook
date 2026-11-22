@@ -1,12 +1,15 @@
+const fs = require('node:fs');
 const { SlashCommandBuilder } = require('discord.js');
 const { MATCH_STATUS_LABELS } = require('../constants');
 const adminViews = require('../interactions/adminViews');
-const { saveScreenshot, cleanupPendingScreenshots } = require('../utils/screenshotStore');
+const { saveScreenshot, cleanupPendingScreenshots, savePendingData } = require('../utils/screenshotStore');
+const { matchToRoster } = require('../integrations/scoreboardReader');
 
 /**
  * /관리자 - 관리자 전용 커맨드
  * - 계정정보: 모든 계정의 정보를 행렬 표로 (+ CSV)
- * - 데이터적재: 대전 + 판 + 이미지를 받아, DB의 대전 목록에서 그 판을 찾아 K/D/A · 승점을 갱신
+ * - 데이터적재: 종료된 대전 + 판 + 이미지를 받아, 이미지를 자동으로 읽어(Claude API) 챔피언 · K/D/A · CS · 승패를
+ *   채운 뒤 관리자가 확인하고 저장한다. 승점도 함께 갱신된다.
  */
 module.exports = {
   data: new SlashCommandBuilder()
@@ -16,9 +19,14 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName('데이터적재')
-        .setDescription('종료된 대전의 한 판을 찾아 이미지를 보고 K/D/A · 승패(승점)를 입력/갱신합니다.')
+        .setDescription('종료된 대전의 한 판을 찾아, 결과 이미지를 읽어 K/D/A · 챔피언 · 승패(승점)를 갱신합니다.')
         .addIntegerOption((o) =>
-          o.setName('대전').setDescription('종료된 대전 번호 (입력하면 목록에서 고를 수 있습니다)').setRequired(true).setMinValue(1).setAutocomplete(true),
+          o
+            .setName('대전')
+            .setDescription('종료된 대전 번호 (입력하면 목록에서 고를 수 있습니다)')
+            .setRequired(true)
+            .setMinValue(1)
+            .setAutocomplete(true),
         )
         .addIntegerOption((o) =>
           o.setName('판').setDescription('몇 번째 판인지 (1~10)').setRequired(true).setMinValue(1).setMaxValue(10),
@@ -40,7 +48,7 @@ module.exports = {
     return interaction.respond(choices);
   },
 
-  async execute(interaction, { services, guild, config, fetchImpl }) {
+  async execute(interaction, { services, guild, config, fetchImpl, scoreboardReader }) {
     const sub = interaction.options.getSubcommand();
 
     if (sub === '계정정보') {
@@ -51,9 +59,9 @@ module.exports = {
       const matchId = interaction.options.getInteger('대전', true);
       const gameNo = interaction.options.getInteger('판', true);
       const attachment = interaction.options.getAttachment('이미지', true);
-      // 대전/판 확인 (없으면 바로 안내)
+      // 대전/판 확인 (없거나 종료되지 않은 대전이면 바로 안내)
       const roster = services.admin.getGameRoster(guild.id, matchId, gameNo);
-      // 이미지 다운로드가 3초를 넘을 수 있어 먼저 응답을 예약한다.
+      // 이미지 다운로드 + 자동 인식이 3초를 넘으므로 먼저 응답을 예약한다. (예약 후 15분 안에 답하면 된다)
       await interaction.deferReply();
       await cleanupPendingScreenshots(config.recordsDir, interaction.guildId);
       // 디스코드 첨부 주소는 만료되므로 바로 내려받아 '대기 캡쳐'로 둔다. 저장하면 그 판의 캡쳐가 된다.
@@ -65,7 +73,36 @@ module.exports = {
         baseName: `pending-${token}`,
         ...(fetchImpl ? { fetchImpl } : {}),
       });
-      return interaction.editReply(adminViews.loadPreviewMessage(roster, pendingPath, token));
+
+      // 이미지 자동 인식 (Claude API). 실패해도 직접 입력으로 계속할 수 있다.
+      let recognition = null;
+      if (scoreboardReader?.enabled) {
+        const members = [...roster.red, ...roster.blue];
+        try {
+          const data = await scoreboardReader.read({
+            buffer: await fs.promises.readFile(pendingPath),
+            mediaType: attachment.contentType,
+            roster: members.map((p, i) => ({ no: i + 1, displayName: p.display_name, gameName: p.game_name })),
+          });
+          const matched = matchToRoster(data, roster);
+          recognition = {
+            ok: true,
+            complete: matched.complete,
+            winnerSide: matched.winnerSide,
+            stats: [...matched.stats.entries()].map(([guildMemberId, st]) => ({ guildMemberId, ...st })),
+            warnings: matched.warnings,
+            model: data.model,
+            signature: roster.signature,
+          };
+        } catch (err) {
+          if (err.name !== 'ScoreboardReadError') console.error('이미지 자동 인식 실패:', err);
+          recognition = { ok: false, error: err.message, warnings: [] };
+        }
+        await savePendingData(config.recordsDir, interaction.guildId, token, recognition);
+      }
+      return interaction.editReply(
+        adminViews.loadPreviewMessage(roster, pendingPath, token, recognition, Boolean(scoreboardReader?.enabled)),
+      );
     }
   },
 };
