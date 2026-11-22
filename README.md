@@ -35,16 +35,23 @@
 ### PaliGemma(무료) 서버 실행
 
 1. **Python 3.10 이상**을 설치합니다. NVIDIA GPU가 있으면 https://pytorch.org 에서 CUDA용 PyTorch를 먼저 설치하세요.
-2. 패키지 설치
+2. 봇 폴더에서 **가상환경**을 만들고 패키지를 설치합니다. (`pip` 대신 `python -m pip`를 써야 다른 Python에 설치되는 문제를 피할 수 있습니다)
    ```bash
-   pip install -r scripts/paligemma/requirements.txt
+   python3 -m venv .venv-paligemma
+   source .venv-paligemma/bin/activate          # Windows: .venv-paligemma\Scripts\activate
+   python -m pip install --upgrade pip
+   python -m pip install -r scripts/paligemma/requirements.txt
+   python -c "import torch; print(torch.__version__, torch.backends.mps.is_available())"   # Mac(M 칩)은 True면 GPU 가속
    ```
+   다음부터는 서버를 켜기 전에 `source .venv-paligemma/bin/activate`만 실행하면 됩니다.
+   - `torch>=2.3`을 찾을 수 없다는 오류가 나면: `python -m pip --version`의 Python이 `python3 --version`과 같은지 확인하고, 안 되면 Python 3.12로 가상환경을 다시 만드세요. Intel Mac은 PyTorch 2.2.2까지만 지원되어 `pip install "torch==2.2.2" "numpy<2" transformers pillow accelerate`로 설치해야 하며 매우 느립니다.
 3. **모델 사용 동의**: https://huggingface.co/google/paligemma2-3b-mix-448 에 로그인해 Gemma 사용 약관에 동의하고, 토큰으로 로그인합니다.
    ```bash
    huggingface-cli login     # 또는 환경 변수 HF_TOKEN
    ```
 4. 서버 실행 (처음 실행 때 모델 약 6GB를 내려받습니다). 봇과 **별도 터미널**에서 켜 두세요.
    ```bash
+   source .venv-paligemma/bin/activate
    python scripts/paligemma/server.py
    ```
    `[paligemma] http://127.0.0.1:8765 에서 대기 중`이 나오면 준비 완료입니다.

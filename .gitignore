@@ -5,3 +5,4 @@ logs/
 data/records/
 __pycache__/
 *.pyc
+.venv*/
