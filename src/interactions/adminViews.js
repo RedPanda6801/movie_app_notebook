@@ -213,8 +213,7 @@ function loadResultMessage(result, winnerSide, pointsByUser) {
     .setTitle(`✅ 대전 #${match.id} ${gameNo}판 데이터 적재 완료`)
     .setColor(COLORS.GREEN)
     .setDescription(
-      `${created ? '새 기록을 만들었습니다.' : '기존 기록을 갱신했습니다.'} 승점은 종료된 대전 기준 누적 값입니다.` +
-        (match.status !== 'FINISHED' ? '\n(이 대전은 아직 진행 중이라, 종료되면 승점에 반영됩니다)' : ''),
+      `${created ? '새 기록을 만들었습니다.' : '기존 기록을 갱신했습니다.'} 승점은 종료된 대전 기준 누적 값입니다.`,
     )
     .addFields(fields);
   return { content: '', embeds: [embed], components: [], files: [], attachments: [] };

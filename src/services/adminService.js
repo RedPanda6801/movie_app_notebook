@@ -21,16 +21,32 @@ function createAdminService(repos, accounts) {
 
   /* ───────────── 데이터적재 ───────────── */
 
-  /** 데이터 적재 대상 대전 (진행 중 또는 종료, 이 서버) */
+  /**
+   * 데이터 적재 대상 대전: 이 서버의 **종료된 대전만**.
+   * 모집 중 · 진행 중인 대전은 관리 패널의 [대전 기록]으로 기록하고, 취소된 대전은 승점에 반영되지 않으므로 제외한다.
+   */
   function requireLoadableMatch(guildId, matchId) {
     const match = matches.findById(Number(matchId));
     if (!match || match.guild_id !== guildId) {
       throw new UserError(`대전 #${matchId}을(를) 이 서버의 대전 목록에서 찾을 수 없습니다.`);
     }
-    if (match.status !== MATCH_STATUS.IN_PROGRESS && match.status !== MATCH_STATUS.FINISHED) {
-      throw new UserError('진행 중이거나 종료된 대전만 데이터를 적재할 수 있습니다. (모집 중 · 취소된 대전 제외)');
+    if (match.status !== MATCH_STATUS.FINISHED) {
+      const reason = {
+        RECRUITING: '아직 시작하지 않은 대전',
+        IN_PROGRESS: '진행 중인 대전',
+        CANCELED: '취소된 대전',
+      }[match.status];
+      throw new UserError(
+        `대전 #${match.id}은(는) ${reason}이라 데이터를 적재할 수 없습니다. 종료된 대전만 고칠 수 있습니다.` +
+          (match.status === MATCH_STATUS.IN_PROGRESS ? ' (진행 중인 대전은 관리 패널의 [대전 기록]을 이용해 주세요)' : ''),
+      );
     }
     return match;
+  }
+
+  /** 데이터 적재 대상 목록 (자동완성용): 이 서버의 종료된 대전, 최신순 */
+  function listLoadableMatches(guildId, limit = 25) {
+    return matches.findRecentWithRecordsByGuild(guildId, 100).filter((m) => m.status === MATCH_STATUS.FINISHED).slice(0, limit);
   }
 
   /** 판 번호 확인: 1 ~ 대전의 판 수 */
@@ -187,7 +203,7 @@ function createAdminService(repos, accounts) {
     }
   }
 
-  return { listAccounts, getGameRoster, loadGameRecord, setGameScreenshot, requireLoadableMatch };
+  return { listAccounts, getGameRoster, loadGameRecord, setGameScreenshot, requireLoadableMatch, listLoadableMatches };
 }
 
 module.exports = { createAdminService };

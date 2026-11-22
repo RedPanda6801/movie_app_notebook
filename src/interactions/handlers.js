@@ -487,7 +487,6 @@ const handlers = {
     const message = adminViews.loadResultMessage(result, winnerSide, points);
     if (note) message.content = note.trim();
     await interaction.editReply(message);
-    if (result.match.status === 'IN_PROGRESS') await refreshMatchMessage(ctx.client, ctx.services, result.match.id);
   },
 };
 

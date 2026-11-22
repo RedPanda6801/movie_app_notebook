@@ -489,6 +489,7 @@ test('관리자 데이터적재: 기록이 없는 판은 새로 만들고, 있�
   const { services, guild, users, fill } = ctx;
   const match = fill(3);
   const base = startWithTeams(ctx);
+  services.matches.finish(base); // 데이터적재는 종료된 대전만
   const roster = services.admin.getGameRoster(guild.id, match.id, 2);
   assert.equal(roster.record, null, '2판은 아직 기록 없음');
   const all = [...roster.red, ...roster.blue];
@@ -497,11 +498,10 @@ test('관리자 데이터적재: 기록이 없는 판은 새로 만들고, 있�
   const created = services.admin.loadGameRecord({ ...base, matchId: match.id, gameNo: 2, signature: roster.signature, winnerSide: 'RED', stats: stats('A') });
   assert.equal(created.created, true);
   assert.equal(created.players.length, 10);
-  services.matches.finish(base);
   const redUser = roster.red[0].discord_user_id;
   assert.equal(services.points.getStats(guild.id, redUser).points, 1);
 
-  // 종료된 대전도 갱신 가능: 승리팀을 바꾸면 승점이 바뀐다
+  // 다시 적재하면 덮어쓴다: 승리팀을 바꾸면 승점이 바뀐다
   const again = services.admin.getGameRoster(guild.id, match.id, 2);
   assert.equal(again.winnerSide, 'RED');
   assert.equal(again.red[0].champion, 'A0', '기존 값으로 양식을 채울 수 있다');
@@ -538,22 +538,22 @@ test('관리자 계정정보: 탈퇴 회원 포함 모든 계정 + 전적', () =
   ]);
 });
 
-test('데이터적재로 뒤의 판을 먼저 넣어도 [대전 기록]은 비어 있는 판부터 기록한다', () => {
+test('관리자 데이터적재: 종료된 대전만 가능 (모집 중 · 진행 중 · 취소 불가), 자동완성도 종료된 대전만', () => {
   const ctx = setup();
   const { services, guild, fill } = ctx;
-  const match = fill(3);
+  const match = fill(1);
+  assert.throws(() => services.admin.getGameRoster(guild.id, match.id, 1), isUserError(/아직 시작하지 않은 대전/));
   const base = startWithTeams(ctx);
-  const roster = services.admin.getGameRoster(guild.id, match.id, 3);
-  const all = [...roster.red, ...roster.blue];
-  services.admin.loadGameRecord({
-    ...base,
-    matchId: match.id,
-    gameNo: 3,
-    winnerSide: 'RED',
-    stats: all.map((p, i) => ({ guildMemberId: p.guild_member_id, champion: `Z${i}`, kills: 0, deaths: 0, assists: 0, cs: 0 })),
-  });
-  assert.equal(services.matches.checkCanRecord(base).gameNo, 1);
-  const first = services.matches.checkCanRecord(base);
-  services.matches.recordGame({ ...base, gameNo: 1, winnerSide: 'RED', stats: statsFor([...first.red, ...first.blue]) });
-  assert.equal(services.matches.checkCanRecord(base).gameNo, 2);
+  assert.throws(() => services.admin.getGameRoster(guild.id, match.id, 1), isUserError(/진행 중인 대전.*\[대전 기록\]/));
+  assert.deepEqual(services.admin.listLoadableMatches(guild.id), []);
+  services.matches.finish(base);
+  assert.equal(services.admin.getGameRoster(guild.id, match.id, 1).match.id, match.id);
+  assert.deepEqual(services.admin.listLoadableMatches(guild.id).map((m) => m.id), [match.id]);
+
+  // 취소된 대전
+  ctx.create(ctx.users[0]);
+  const canceled = services.matches.getActiveMatch(guild.id);
+  services.matches.cancel({ guildId: guild.id, discordUserId: ctx.users[0] });
+  assert.throws(() => services.admin.getGameRoster(guild.id, canceled.id, 1), isUserError(/취소된 대전/));
+  assert.deepEqual(services.admin.listLoadableMatches(guild.id).map((m) => m.id), [match.id]);
 });

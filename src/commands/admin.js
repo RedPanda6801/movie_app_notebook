@@ -16,9 +16,9 @@ module.exports = {
     .addSubcommand((s) =>
       s
         .setName('데이터적재')
-        .setDescription('대전의 한 판을 찾아 이미지를 보고 K/D/A · 승패(승점)를 입력/갱신합니다.')
+        .setDescription('종료된 대전의 한 판을 찾아 이미지를 보고 K/D/A · 승패(승점)를 입력/갱신합니다.')
         .addIntegerOption((o) =>
-          o.setName('대전').setDescription('대전 번호 (입력하면 목록에서 고를 수 있습니다)').setRequired(true).setMinValue(1).setAutocomplete(true),
+          o.setName('대전').setDescription('종료된 대전 번호 (입력하면 목록에서 고를 수 있습니다)').setRequired(true).setMinValue(1).setAutocomplete(true),
         )
         .addIntegerOption((o) =>
           o.setName('판').setDescription('몇 번째 판인지 (1~10)').setRequired(true).setMinValue(1).setMaxValue(10),
@@ -26,11 +26,11 @@ module.exports = {
         .addAttachmentOption((o) => o.setName('이미지').setDescription('경기 결과 캡쳐 이미지').setRequired(true)),
     ),
 
-  /** 대전 번호 자동완성: 이 서버의 진행 중/종료된 대전 (최근 25개) */
+  /** 대전 번호 자동완성: 이 서버의 종료된 대전 (최근 25개) */
   async autocomplete(interaction, { services, guild }) {
     const typed = String(interaction.options.getFocused() ?? '').trim();
-    const choices = services.records
-      .listMatches(guild.id)
+    const choices = services.admin
+      .listLoadableMatches(guild.id, 100)
       .filter((m) => !typed || String(m.id).startsWith(typed))
       .slice(0, 25)
       .map((m) => ({
