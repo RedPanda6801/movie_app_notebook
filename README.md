@@ -24,42 +24,6 @@
    npm start
    ```
 
-**이미지 자동 인식(선택)**: `/관리자 데이터적재`에서 결과 이미지를 자동으로 읽습니다. `.env`의 `SCOREBOARD_PROVIDER`로 방식을 고릅니다.
-
-| 방식 | 비용 | 읽는 것 | 준비 |
-|---|---|---|---|
-| `paligemma` | **무료** (PC에서 실행) | K/D/A · CS (챔피언 · 승리팀은 직접 입력) | 아래 PaliGemma 서버 실행 |
-| `claude` | 유료 (이미지당 API 요금) | 챔피언 · K/D/A · CS · 승리팀 | `ANTHROPIC_API_KEY` |
-| 비움 | - | 자동 인식 없음 (직접 입력) | - |
-
-### PaliGemma(무료) 서버 실행
-
-1. **Python 3.10 이상**을 설치합니다. NVIDIA GPU가 있으면 https://pytorch.org 에서 CUDA용 PyTorch를 먼저 설치하세요.
-2. 봇 폴더에서 **가상환경**을 만들고 패키지를 설치합니다. (`pip` 대신 `python -m pip`를 써야 다른 Python에 설치되는 문제를 피할 수 있습니다)
-   ```bash
-   python3 -m venv .venv-paligemma
-   source .venv-paligemma/bin/activate          # Windows: .venv-paligemma\Scripts\activate
-   python -m pip install --upgrade pip
-   python -m pip install -r scripts/paligemma/requirements.txt
-   python -c "import torch; print(torch.__version__, torch.backends.mps.is_available())"   # Mac(M 칩)은 True면 GPU 가속
-   ```
-   다음부터는 서버를 켜기 전에 `source .venv-paligemma/bin/activate`만 실행하면 됩니다.
-   - `torch>=2.3`을 찾을 수 없다는 오류가 나면: `python -m pip --version`의 Python이 `python3 --version`과 같은지 확인하고, 안 되면 Python 3.12로 가상환경을 다시 만드세요. Intel Mac은 PyTorch 2.2.2까지만 지원되어 `pip install "torch==2.2.2" "numpy<2" transformers pillow accelerate`로 설치해야 하며 매우 느립니다.
-3. **모델 사용 동의**: https://huggingface.co/google/paligemma2-3b-mix-448 에 로그인해 Gemma 사용 약관에 동의하고, 토큰으로 로그인합니다.
-   ```bash
-   huggingface-cli login     # 또는 환경 변수 HF_TOKEN
-   ```
-4. 서버 실행 (처음 실행 때 모델 약 6GB를 내려받습니다). 봇과 **별도 터미널**에서 켜 두세요.
-   ```bash
-   source .venv-paligemma/bin/activate
-   python scripts/paligemma/server.py
-   ```
-   `[paligemma] http://127.0.0.1:8765 에서 대기 중`이 나오면 준비 완료입니다.
-5. `.env`에 `SCOREBOARD_PROVIDER=paligemma`를 넣고 봇을 다시 켭니다.
-
-- **사양**: GPU가 없으면 CPU로 동작하지만 느립니다(이미지 1장에 수 분 걸릴 수 있음). CPU에서는 RAM 16GB 이상을 권장하고, 부족하면 `PALIGEMMA_DTYPE=bfloat16`로 메모리를 절반으로 줄일 수 있습니다.
-- **정확도**: 선명한 전체 화면 캡쳐일수록 잘 읽습니다. 애매한 값은 비워 두니 입력창에서 확인하고 채워 주세요. 조각 수는 `PALIGEMMA_TILES_X` / `PALIGEMMA_TILES_Y`로 바꿀 수 있습니다.
-
 데이터는 `data/bot.sqlite`, 결과 캡쳐는 `data/records/<서버 ID>/`에 저장됩니다. (`DATABASE_PATH`, `RECORDS_DIR`로 변경 가능)
 이전 버전의 DB 파일은 봇을 켤 때 자동으로 새 구조로 바뀌며, 기존 승점은 유지됩니다.
 
@@ -154,7 +118,7 @@
 | `/계정 등록 <아이디>` · `/계정 탈퇴` | 관리자 본인의 계정 관리 (롤 아이디 필수) |
 | `/팀 등록 <1팀/2팀>` · `/팀 탈퇴` · `/팀 셔플` | 관리자 본인 팀 선택 / 팀 셔플 (버튼과 동일) |
 | `/관리자 계정정보` | 이 서버의 모든 계정 정보(롤 아이디 · 선호 포지션 · 상태 · 전적 · 승점)를 표로 보고, CSV 파일로 받습니다. |
-| `/관리자 데이터적재 <대전> <판> <이미지>` | DB에 있는 **종료된** 대전의 한 판을 찾아, 올린 결과 이미지를 **자동으로 읽어** 승리팀과 10명의 챔피언 · K/D/A · CS를 채웁니다. 확인 후 [이대로 저장] 또는 [수정 후 저장]을 누르면 저장됩니다. (자동 인식은 `ANTHROPIC_API_KEY`가 있을 때만, 없으면 직접 입력) 승점도 함께 갱신됩니다. 모집 중 · 진행 중 · 취소된 대전은 고칠 수 없습니다. (대전 번호는 입력하면 종료된 대전 목록에서 고를 수 있습니다) |
+| `/관리자 데이터적재 <대전> <판> <이미지>` | DB에 있는 **종료된** 대전의 한 판을 찾아, 올린 이미지를 보면서 승리팀과 10명의 챔피언 · K/D/A · CS를 입력/수정합니다. 승점도 함께 갱신됩니다. 모집 중 · 진행 중 · 취소된 대전은 고칠 수 없습니다. (대전 번호는 입력하면 종료된 대전 목록에서 고를 수 있습니다) |
 | `/승점 조회 [사용자]` · `/승점 랭킹` | 승점 조회 (버튼은 이후 추가 예정) |
 
 ## 로그
