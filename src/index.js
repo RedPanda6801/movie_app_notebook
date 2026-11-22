@@ -5,13 +5,13 @@ const { createServices } = require('./services');
 const { commands } = require('./commands');
 const { createInteractionHandler } = require('./interactions/router');
 const { createCommandLogger } = require('./utils/commandLogger');
-const { createScoreboardReader } = require('./integrations/scoreboardReader');
+const { createScoreboardReaderFromConfig } = require('./integrations/scoreboardReader');
 
 const db = openDatabase(config.databasePath);
 const services = createServices(db);
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 const commandLogger = createCommandLogger({ dir: config.logDir, timeZone: config.logTimeZone });
-const scoreboardReader = createScoreboardReader({ apiKey: config.anthropicApiKey, model: config.scoreboardModel });
+const scoreboardReader = createScoreboardReaderFromConfig(config);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -28,7 +28,7 @@ client.once(Events.ClientReady, (c) => {
   console.log(
     scoreboardReader.enabled
       ? `데이터적재 이미지 자동 인식: 켜짐 (${scoreboardReader.model})`
-      : '데이터적재 이미지 자동 인식: 꺼짐 (ANTHROPIC_API_KEY 미설정 - 직접 입력)',
+      : '데이터적재 이미지 자동 인식: 꺼짐 (SCOREBOARD_PROVIDER 미설정 - 직접 입력)',
   );
 });
 

@@ -50,11 +50,14 @@
   - 흐름: 커맨드(대전 번호는 자동완성) → **이미지 자동 인식** → 미리보기(올린 이미지 + 인식한 값 + 확인할 점) → [이대로 저장] 또는 [수정 후 저장](입력창에 인식 값이 채워짐) → 저장
   - 이미 기록된 판은 **덮어쓰고**(그 판에 저장된 팀 기준), 기록이 없는 판은 **새로 만든다**(대전 참가자의 마지막 팀, 5:5 필요).
   - **종료(`FINISHED`)된 대전만** 고칠 수 있다. 모집 중 · 진행 중인 대전은 등록 불가(진행 중이면 관리 패널의 [대전 기록]을 쓰라고 안내), 취소된 대전도 불가. 대전 번호 자동완성에도 종료된 대전만 나온다.
-  - **이미지 자동 인식** (`src/integrations/scoreboardReader.js`): Claude API(`claude-opus-5-5`, 이미지 입력 + JSON schema 구조화 출력 + 서버 측 refusal fallback)로 결과 화면을 읽어 참가자별 챔피언(한국어 공식 이름) · K/D/A · CS와 승리팀을 받는다.
+  - **이미지 자동 인식**: `SCOREBOARD_PROVIDER`로 고른다.
+    - `paligemma` (**무료**, 로컬): PC에서 `scripts/paligemma/server.py`(PaliGemma 2 `google/paligemma2-3b-mix-448`, transformers)를 함께 실행. 이미지를 가로 2 × 세로 5 조각(겹침 15%)으로 나눠 `ocr`하고, 봇(`src/integrations/paligemmaReader.js` + `ocrScoreboardParser.js`)이 같은 가로 띠에서 참가자 이름과 `K / D / A` · CS를 찾아 짝짓는다. **챔피언(아이콘)과 승리팀은 읽지 못해 관리자가 입력**한다(그래서 [이대로 저장]은 열리지 않고 [전적 입력]에 K/D/A · CS가 채워진다). 짝이 애매하면(이름 수 ≠ K/D/A 수 등) 비워 둔다 - 틀린 사람에게 값이 들어가지 않게.
+    - `claude` (유료): Claude API(`claude-opus-5-5`, 이미지 입력 + JSON schema 구조화 출력 + 서버 측 refusal fallback)로 챔피언(한국어 공식 이름) · K/D/A · CS와 승리팀까지 받는다. (`src/integrations/scoreboardReader.js`)
+    - 미설정: `ANTHROPIC_API_KEY`가 있으면 `claude`, 없으면 꺼짐(직접 입력).
     - 화면의 행은 참가자 목록(번호 · 이름 · 롤 아이디)과 연결하고, 화면 위/아래 팀이 1팀/2팀 중 어디인지는 연결된 사람들의 다수결로 정한다.
     - 10명 모두 연결되고 승리팀이 확인되면 **[이대로 저장]**이 열린다. 빠진 사람 · 중복 · 이상한 숫자 · 팀 불일치가 있으면 "확인할 점"으로 보여주고 [전적 입력]으로만 저장한다.
     - **결과는 참고용이라 저장 전 관리자 확인을 거친다.** (자동 저장 안 함) 인식 결과는 `pending-<토큰>-read.json`으로 대기 캡쳐 옆에 저장했다가 저장 후 지운다.
-    - `ANTHROPIC_API_KEY`가 없으면 꺼지고(직접 입력), 인식에 실패해도 직접 입력으로 계속할 수 있다. 모델은 `SCOREBOARD_MODEL`로 바꿀 수 있다.
+    - 인식에 실패해도(서버 꺼짐, 시간 초과, API 오류) 이유를 보여주고 직접 입력으로 계속할 수 있다.
   - 이미지는 저장 시 그 판의 결과 캡쳐로 바뀐다.
   - 올린 이미지는 저장 전까지 `pending-<토큰>` 파일로 대기하고, 하루가 지나면 정리된다.
   - 피어리스 · 한 판 중복 검사, 팀 구성 서명 검사를 [대전 기록]과 똑같이 한다.
@@ -104,7 +107,7 @@
 - **Runtime**: Node.js
 - **Discord 라이브러리**: discord.js
 - **DB**: SQLite
-- **이미지 인식**: Claude API (`@anthropic-ai/sdk`, 기본 모델 `claude-opus-5-5`) - 선택 기능, `ANTHROPIC_API_KEY` 필요
+- **이미지 인식 (선택)**: 무료 PaliGemma 2 로컬 서버(Python · transformers) 또는 Claude API(`@anthropic-ai/sdk`, `claude-opus-5-5`)
 
 ## 데이터베이스 설계 (RDB)
 
@@ -377,7 +380,10 @@ src/
     ids.js              # customId 규칙 + 로그용 이름
   commands/             # 슬래시 커맨드 정의 + 응답 (관리자 전용)
   integrations/
-    scoreboardReader.js # 결과 캡쳐 자동 인식 (Claude API) + 참가자/팀 연결
+    scoreboardReader.js # 인식 방식 선택 + Claude API 인식 + 참가자/팀 연결(matchToRoster)
+    paligemmaReader.js  # 무료 PaliGemma 로컬 서버 호출
+    ocrScoreboardParser.js # OCR 글자 → 참가자별 K/D/A · CS (순수 함수)
+scripts/paligemma/      # PaliGemma 로컬 OCR 서버 (Python, PC에서 실행)
   utils/                # UserError, Embed 포맷, 로그, 결과 캡쳐 저장, 텍스트 표(한글 폭 맞춤)
 data/                   # bot.sqlite, records/<서버 ID>/ 결과 캡쳐 (git 제외)
 logs/                   # 서버별 로그 (<서버 ID>.log, git 제외)

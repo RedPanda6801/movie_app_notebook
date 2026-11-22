@@ -24,7 +24,34 @@
    npm start
    ```
 
-**이미지 자동 인식(선택)**: `.env`에 `ANTHROPIC_API_KEY`(Claude API 키, https://console.anthropic.com 에서 발급)를 넣으면 `/관리자 데이터적재`에서 결과 이미지를 자동으로 읽습니다. 이미지 1장 인식마다 API 요금이 듭니다. 키가 없으면 이 기능만 꺼지고 나머지는 그대로 동작합니다.
+**이미지 자동 인식(선택)**: `/관리자 데이터적재`에서 결과 이미지를 자동으로 읽습니다. `.env`의 `SCOREBOARD_PROVIDER`로 방식을 고릅니다.
+
+| 방식 | 비용 | 읽는 것 | 준비 |
+|---|---|---|---|
+| `paligemma` | **무료** (PC에서 실행) | K/D/A · CS (챔피언 · 승리팀은 직접 입력) | 아래 PaliGemma 서버 실행 |
+| `claude` | 유료 (이미지당 API 요금) | 챔피언 · K/D/A · CS · 승리팀 | `ANTHROPIC_API_KEY` |
+| 비움 | - | 자동 인식 없음 (직접 입력) | - |
+
+### PaliGemma(무료) 서버 실행
+
+1. **Python 3.10 이상**을 설치합니다. NVIDIA GPU가 있으면 https://pytorch.org 에서 CUDA용 PyTorch를 먼저 설치하세요.
+2. 패키지 설치
+   ```bash
+   pip install -r scripts/paligemma/requirements.txt
+   ```
+3. **모델 사용 동의**: https://huggingface.co/google/paligemma2-3b-mix-448 에 로그인해 Gemma 사용 약관에 동의하고, 토큰으로 로그인합니다.
+   ```bash
+   huggingface-cli login     # 또는 환경 변수 HF_TOKEN
+   ```
+4. 서버 실행 (처음 실행 때 모델 약 6GB를 내려받습니다). 봇과 **별도 터미널**에서 켜 두세요.
+   ```bash
+   python scripts/paligemma/server.py
+   ```
+   `[paligemma] http://127.0.0.1:8765 에서 대기 중`이 나오면 준비 완료입니다.
+5. `.env`에 `SCOREBOARD_PROVIDER=paligemma`를 넣고 봇을 다시 켭니다.
+
+- **사양**: GPU가 없으면 CPU로 동작하지만 느립니다(이미지 1장에 수 분 걸릴 수 있음). CPU에서는 RAM 16GB 이상을 권장하고, 부족하면 `PALIGEMMA_DTYPE=bfloat16`로 메모리를 절반으로 줄일 수 있습니다.
+- **정확도**: 선명한 전체 화면 캡쳐일수록 잘 읽습니다. 애매한 값은 비워 두니 입력창에서 확인하고 채워 주세요. 조각 수는 `PALIGEMMA_TILES_X` / `PALIGEMMA_TILES_Y`로 바꿀 수 있습니다.
 
 데이터는 `data/bot.sqlite`, 결과 캡쳐는 `data/records/<서버 ID>/`에 저장됩니다. (`DATABASE_PATH`, `RECORDS_DIR`로 변경 가능)
 이전 버전의 DB 파일은 봇을 켤 때 자동으로 새 구조로 바뀌며, 기존 승점은 유지됩니다.

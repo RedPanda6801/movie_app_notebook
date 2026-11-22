@@ -82,7 +82,12 @@ module.exports = {
           const data = await scoreboardReader.read({
             buffer: await fs.promises.readFile(pendingPath),
             mediaType: attachment.contentType,
-            roster: members.map((p, i) => ({ no: i + 1, displayName: p.display_name, gameName: p.game_name })),
+            roster: members.map((p, i) => ({
+              no: i + 1,
+              displayName: p.display_name,
+              gameName: p.game_name,
+              side: i < roster.red.length ? 'RED' : 'BLUE',
+            })),
           });
           const matched = matchToRoster(data, roster);
           recognition = {

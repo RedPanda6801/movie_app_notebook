@@ -150,7 +150,7 @@ function loadPreviewMessage(roster, pendingPath, token, recognition = null, read
   } else if (recognition && !recognition.ok) {
     lines.push(`⚠️ 이미지 자동 인식 실패: ${recognition.error}`, '이미지를 보고 [전적 입력]으로 직접 입력해 주세요.');
   } else if (!readerEnabled) {
-    lines.push('이미지 자동 인식이 꺼져 있습니다. (ANTHROPIC_API_KEY 미설정) 이미지를 보고 [전적 입력]으로 입력해 주세요.');
+    lines.push('이미지 자동 인식이 꺼져 있습니다. (SCOREBOARD_PROVIDER 미설정) 이미지를 보고 [전적 입력]으로 입력해 주세요.');
   }
   lines.push('저장하면 이 판의 기록과 승점이 갱신되고, 이미지는 이 판의 결과 캡쳐로 저장됩니다.');
 

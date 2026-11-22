@@ -142,7 +142,7 @@ function createScoreboardReader({ apiKey = process.env.ANTHROPIC_API_KEY, model 
     return { ...data, model: response.model };
   }
 
-  return { enabled, model, read };
+  return { enabled, provider: 'claude', model, read };
 }
 
 class ScoreboardReadError extends Error {
@@ -209,6 +209,8 @@ function matchToRoster(data, { red, blue }) {
 
   const missing = list.filter((p) => !stats.has(p.guild_member_id));
   if (missing.length) warnings.push(`읽지 못한 참가자: ${missing.map((p) => p.display_name || p.discord_user_id).join(', ')}`);
+  const noChampion = [...stats.values()].filter((s) => !s.champion).length;
+  if (noChampion) warnings.push(`챔피언을 읽지 못했습니다 (${noChampion}명). 입력창에서 챔피언을 채워 주세요.`);
 
   // 화면 팀 ↔ 우리 팀 (1팀/2팀): 연결된 사람들의 다수결
   const blueIs = votes.blue.RED >= votes.blue.BLUE ? 'RED' : 'BLUE';
@@ -248,7 +250,32 @@ function overlayRecognition(roster, recognition) {
   };
 }
 
+/**
+ * 설정으로 이미지 인식기를 고른다.
+ *   SCOREBOARD_PROVIDER=paligemma : 무료 로컬 PaliGemma OCR 서버 (scripts/paligemma/server.py)
+ *   SCOREBOARD_PROVIDER=claude    : Claude API (유료, ANTHROPIC_API_KEY 필요)
+ *   SCOREBOARD_PROVIDER=off 또는 미설정이고 키도 없음 : 꺼짐 (직접 입력)
+ * 미설정이면 ANTHROPIC_API_KEY가 있을 때 claude, 없으면 off (이전 버전과 같은 동작)
+ */
+function createScoreboardReaderFromConfig(config, { fetchImpl } = {}) {
+  const provider = (config.scoreboardProvider || (config.anthropicApiKey ? 'claude' : 'off')).toLowerCase();
+  if (provider === 'paligemma') {
+    // 순환 참조를 피하려고 여기서 불러온다.
+    const { createPaligemmaReader } = require('./paligemmaReader');
+    return createPaligemmaReader({
+      url: config.paligemmaUrl,
+      tilesX: config.paligemmaTilesX,
+      tilesY: config.paligemmaTilesY,
+      timeoutMs: config.paligemmaTimeoutMs,
+      ...(fetchImpl ? { fetchImpl } : {}),
+    });
+  }
+  if (provider === 'claude') return createScoreboardReader({ apiKey: config.anthropicApiKey, model: config.scoreboardModel });
+  return { enabled: false, provider: 'off', model: null, read: async () => { throw new ScoreboardReadError('자동 인식이 꺼져 있습니다.'); } };
+}
+
 module.exports = {
+  createScoreboardReaderFromConfig,
   createScoreboardReader,
   matchToRoster,
   overlayRecognition,

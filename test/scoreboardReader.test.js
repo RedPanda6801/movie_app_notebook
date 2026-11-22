@@ -110,3 +110,31 @@ test('빠진 사람, 중복 연결, 이상한 숫자, 승리팀 미확인은 미
 
   assert.equal(matchToRoster({ readable: false, players: [] }, roster).complete, false);
 });
+
+test('PaliGemma 인식기: 서버 응답 → K/D/A · CS, 연결 실패/서버 오류/시간 초과 안내', async () => {
+  const { createPaligemmaReader } = require('../src/integrations/paligemmaReader');
+  const { createScoreboardReaderFromConfig } = require('../src/integrations/scoreboardReader');
+  let sent;
+  const ok = createPaligemmaReader({
+    url: 'http://local:8765/',
+    fetchImpl: async (url, init) => {
+      sent = { url, body: JSON.parse(init.body) };
+      return { ok: true, status: 200, json: async () => ({ model: 'paligemma2', tiles: [{ row: 0, col: 0, text: 'Aaaa 1/2/3 150' }] }) };
+    },
+  });
+  const data = await ok.read({ buffer: Buffer.from([9]), roster: [{ no: 1, gameName: 'Aaaa#KR1', side: 'RED' }] });
+  assert.equal(sent.url, 'http://local:8765/ocr');
+  assert.deepEqual([sent.body.tiles_x, sent.body.tiles_y, sent.body.image], [2, 5, Buffer.from([9]).toString('base64')]);
+  assert.deepEqual([data.players[0].kills, data.players[0].cs, data.model], [1, 150, 'PaliGemma (paligemma2)']);
+
+  const refused = createPaligemmaReader({ fetchImpl: async () => { throw new TypeError('fetch failed'); } });
+  await assert.rejects(refused.read({ buffer: Buffer.from([1]), roster: [] }), /PaliGemma 서버\(http:\/\/127\.0\.0\.1:8765\)에 연결하지 못했습니다/);
+  const broken = createPaligemmaReader({ fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({ error: 'ocr failed: CUDA OOM' }) }) });
+  await assert.rejects(broken.read({ buffer: Buffer.from([1]), roster: [] }), /PaliGemma 서버 오류 \(500\): ocr failed: CUDA OOM/);
+  const slow = createPaligemmaReader({ timeoutMs: 120000, fetchImpl: async () => { const e = new Error('t'); e.name = 'TimeoutError'; throw e; } });
+  await assert.rejects(slow.read({ buffer: Buffer.from([1]), roster: [] }), /2분 안에 끝나지 않았습니다/);
+
+  assert.equal(createScoreboardReaderFromConfig({ scoreboardProvider: 'paligemma' }).provider, 'paligemma');
+  assert.equal(createScoreboardReaderFromConfig({ anthropicApiKey: 'k' }).provider, 'claude');
+  assert.equal(createScoreboardReaderFromConfig({}).enabled, false);
+});

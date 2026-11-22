@@ -19,7 +19,12 @@ module.exports = {
   databasePath: process.env.DATABASE_PATH || 'data/bot.sqlite',
   logDir: process.env.LOG_DIR || 'logs',
   recordsDir: process.env.RECORDS_DIR || 'data/records',
-  // 데이터적재 이미지 자동 인식 (Claude API). 키가 없으면 꺼지고 직접 입력한다.
+  // 데이터적재 이미지 자동 인식: paligemma(무료, 로컬) | claude(유료) | off
+  scoreboardProvider: process.env.SCOREBOARD_PROVIDER || null,
+  paligemmaUrl: process.env.PALIGEMMA_URL || 'http://127.0.0.1:8765',
+  paligemmaTilesX: Number(process.env.PALIGEMMA_TILES_X || 2),
+  paligemmaTilesY: Number(process.env.PALIGEMMA_TILES_Y || 5),
+  paligemmaTimeoutMs: Number(process.env.PALIGEMMA_TIMEOUT_SEC || 600) * 1000,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || null,
   scoreboardModel: process.env.SCOREBOARD_MODEL || 'claude-opus-5-5',
   logTimeZone: process.env.LOG_TIMEZONE || 'Asia/Seoul',
