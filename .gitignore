@@ -3,3 +3,5 @@ node_modules/
 data/*.sqlite*
 logs/
 data/records/
+__pycache__/
+*.pyc

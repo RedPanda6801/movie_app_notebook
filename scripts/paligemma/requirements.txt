@@ -1,0 +1,6 @@
+# PaliGemma 로컬 OCR 서버 (scripts/paligemma/server.py)
+# GPU(NVIDIA)가 있으면 https://pytorch.org 에서 CUDA용 torch를 먼저 설치하세요.
+torch>=2.3
+transformers>=4.47
+pillow>=10
+accelerate>=0.33
