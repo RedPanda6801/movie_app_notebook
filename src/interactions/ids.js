@@ -41,6 +41,9 @@ const ACTIONS = {
   STATS_BY_MEMBER: 'stats.byMember',
   STATS_MEMBER_SELECT: 'stats.memberSelect',
   STATS_ALL: 'stats.all',
+  // /관리자 데이터적재
+  ADMIN_LOAD_OPEN: 'admin.loadOpen', // |<matchId>|<판>|<대기 캡쳐 토큰>
+  ADMIN_LOAD_MODAL: 'admin.loadModal', // |<matchId>|<판>|<토큰>|<팀 구성 서명>
 };
 
 /** 로그에 남길 이름 */
@@ -77,6 +80,8 @@ const ACTION_LABELS = {
   [ACTIONS.STATS_BY_MEMBER]: '개인별 전적 조회',
   [ACTIONS.STATS_MEMBER_SELECT]: '개인별 전적 - 계정 선택',
   [ACTIONS.STATS_ALL]: '전체 전적 조회',
+  [ACTIONS.ADMIN_LOAD_OPEN]: '데이터적재 - 전적 입력',
+  [ACTIONS.ADMIN_LOAD_MODAL]: '데이터적재 - 저장',
 };
 
 function buildId(action, ...args) {

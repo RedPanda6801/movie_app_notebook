@@ -299,15 +299,19 @@ function createMatchService(repos, accounts) {
   function checkCanRecord({ guildId, discordUserId, matchId = null, isAdmin = false }) {
     const match = checkManager({ guildId, discordUserId, matchId, isAdmin });
     requireInProgress(match);
-    const recorded = records.countByMatch(match.id);
-    if (recorded >= match.game_count) {
+    // 다음에 기록할 판 = 아직 기록되지 않은 가장 작은 판 번호
+    // (관리자가 /관리자 데이터적재로 뒤의 판을 먼저 넣었을 수 있다)
+    const done = new Set(records.findByMatch(match.id).map((r) => r.game_no));
+    let next = 1;
+    while (done.has(next)) next += 1;
+    if (next > match.game_count) {
       throw new UserError(`등록한 ${match.game_count}판을 모두 기록했습니다. [대전 종료]를 눌러 주세요.`);
     }
     const list = participants.findByMatchWithDetails(match.id);
     const { red, blue } = requireFullTeams(list);
     return {
       match,
-      gameNo: recorded + 1,
+      gameNo: next,
       participants: list,
       red,
       blue,

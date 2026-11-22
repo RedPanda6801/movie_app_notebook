@@ -54,7 +54,8 @@ function createHarness() {
     fetchImpl: async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }),
   });
 
-  async function send({ kind, user, admin = false, customId, values, fields = {}, command, sub }) {
+  let interactionSeq = 0;
+  async function send({ kind, user, admin = false, customId, values, fields = {}, command, sub, opts = {}, focused = '' }) {
     const calls = [];
     const record = (type) => async (payload) => {
       calls.push({ type, payload });
@@ -63,6 +64,7 @@ function createHarness() {
       if (type === 'editReply') interaction.replied = true;
     };
     const interaction = {
+      id: String(9000000000000 + (interactionSeq += 1)),
       customId,
       values,
       commandName: command,
@@ -81,8 +83,18 @@ function createHarness() {
       isButton: () => kind === 'button',
       isStringSelectMenu: () => kind === 'select',
       isUserSelectMenu: () => kind === 'userSelect',
+      isAutocomplete: () => kind === 'autocomplete',
+      respond: record('respond'),
       isModalSubmit: () => kind === 'modal',
-      options: { getSubcommand: () => sub, getString: () => null, getUser: () => null, data: [{ name: sub, options: [] }] },
+      options: {
+        getSubcommand: () => sub,
+        getString: (k) => opts[k] ?? null,
+        getUser: () => null,
+        getInteger: (k) => opts[k] ?? null,
+        getAttachment: (k) => opts[k] ?? null,
+        getFocused: () => focused,
+        data: [{ name: sub, options: Object.entries(opts).map(([name, value]) => ({ name, value: value?.url ?? value })) }],
+      },
       fields: {
         getTextInputValue: (id) => {
           if (!(id in fields)) throw new Error('no field');
@@ -402,6 +414,68 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.match(csv, /,제라스,7,1,2,150,승/);
   assert.match(csv, /,7,1,2,150,승/);
   assert.match(csv, /,3,1,2,150,패/);
+
+  // ───── 관리자: 계정정보 ─────
+  calls = await send({ kind: 'command', user: 'u2', command: '관리자', sub: '계정정보' });
+  assert.match(textOf(calls[0].payload), /권한이 없습니다/);
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '계정정보' });
+  assert.ok(isEphemeral(calls[0].payload));
+  const accountTable = calls[0].payload.embeds[0].toJSON().description;
+  assert.match(accountTable, /^```\n *# │ 이름/);
+  assert.match(accountTable, /lolu1#KR1/);
+  assert.equal(accountTable.split('\n').length, 2 + 2 + 10, '코드블록 2줄 + 머리글/구분선 + 10명 (중복 아이디 u11은 등록 실패)');
+  assert.match(calls[0].payload.files[0].attachment.toString('utf8'), /번호,이름,디스코드 사용자명,디스코드ID,롤아이디/);
+
+  // ───── 관리자: 데이터적재 (대전 #1 1판을 찾아 K/D/A · 승패 갱신) ─────
+  calls = await send({ kind: 'autocomplete', user: 'admin', admin: true, command: '관리자', focused: '1' });
+  assert.equal(calls[0].type, 'respond');
+  assert.match(calls[0].payload[0].name, /대전 #1 .* 종료 · 1\/2판 기록/);
+  calls = await send({ kind: 'autocomplete', user: 'u2', command: '관리자', focused: '' });
+  assert.deepEqual(calls[0].payload, [], '관리자가 아니면 자동완성 목록 없음');
+
+  const upload = { url: 'https://cdn.example/new.png', name: 'new.png', contentType: 'image/png', size: 3 };
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 99, 판: 1, 이미지: upload } });
+  assert.match(textOf(calls[0].payload), /대전 #99을\(를\) 이 서버의 대전 목록에서 찾을 수 없습니다/);
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 3, 이미지: upload } });
+  assert.match(textOf(calls[0].payload), /2판까지 있습니다/);
+
+  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 1, 이미지: upload } });
+  assert.equal(calls[0].type, 'deferReply');
+  const preview = calls[1].payload;
+  assert.match(JSON.stringify(preview.embeds[0].toJSON()), /기존 기록을 \*\*덮어씁니다\*\*/);
+  assert.equal(preview.files.length, 1, '올린 이미지를 미리보기로 보여준다');
+  const openId = preview.components[0].toJSON().components[0].custom_id;
+  assert.match(openId, /^admin\.loadOpen\|1\|1\|/);
+  const pendingFiles = () => fs.readdirSync(path.join(tmp, 'records', 'guild-1')).filter((f) => f.startsWith('pending-'));
+  assert.equal(pendingFiles().length, 1);
+
+  // 버튼: 관리자만, 기존 값으로 채워진 입력창
+  calls = await send({ kind: 'button', user: 'u2', customId: openId });
+  assert.match(textOf(calls[0].payload), /권한이 없습니다/);
+  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: openId });
+  assert.equal(calls[0].type, 'showModal');
+  const loadModal = calls[0].payload.toJSON();
+  assert.equal(loadModal.components[0].component.options.find((o) => o.default)?.value, 'RED', '기존 승리팀 선택됨');
+  const loadRed = loadModal.components[1].component.value;
+  const loadBlue = loadModal.components[2].component.value;
+  assert.match(loadRed, /제라스 7\/1\/2\/150/, '기존 기록으로 미리 채움');
+
+  // 승리팀을 2팀으로 바꾸고 제라스 K/D/A 수정 → 승점이 바뀐다
+  calls = await send({
+    kind: 'modal',
+    user: 'admin',
+    admin: true,
+    customId: loadModal.custom_id,
+    fields: { winnerSide: ['BLUE'], statsRED: loadRed.replace('제라스 7/1/2/150', '제라스 9/9/9/99'), statsBLUE: loadBlue },
+  });
+  assert.equal(calls[0].type, 'deferReply');
+  const loaded = JSON.stringify(calls[1].payload.embeds[0].toJSON());
+  assert.match(loaded, /데이터 적재 완료/);
+  assert.match(loaded, /제라스\*\* 9\/9\/9 · CS 99/);
+  assert.equal(services.points.getStats(1, redUser).points, 0, '승리팀이 바뀌어 1팀 승점 1 → 0');
+  assert.equal(services.points.getStats(1, blueUser).points, 1, '2팀 승점 0 → 1');
+  assert.equal(pendingFiles().length, 0, '대기 캡쳐가 판 캡쳐로 옮겨졌다');
+  assert.ok(fs.existsSync(path.join(tmp, 'records', 'guild-1', 'match-1-game-1.png')));
 
   // 끝난 대전의 옛 버튼
   calls = await send({ kind: 'button', user: 'u2', customId: 'match.join|1' });

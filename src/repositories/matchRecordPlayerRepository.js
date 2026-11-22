@@ -22,6 +22,14 @@ function createMatchRecordPlayerRepository(db) {
       INSERT INTO match_record_player
         (record_id, guild_member_id, side, game_name, position, champion, kills, deaths, assists, cs, is_win)
       VALUES (@recordId, @guildMemberId, @side, @gameName, @position, @champion, @kills, @deaths, @assists, @cs, @isWin)`),
+    deleteByRecord: db.prepare('DELETE FROM match_record_player WHERE record_id = ?'),
+    findByRecord: db.prepare(`
+      SELECT p.*, a.discord_user_id, gm.display_name
+        FROM match_record_player p
+        JOIN guild_member gm ON gm.id = p.guild_member_id
+        JOIN account a ON a.id = gm.account_id
+       WHERE p.record_id = ?
+       ORDER BY p.side, p.guild_member_id`),
     findByMatch: db.prepare(`
       SELECT ${DETAIL_COLUMNS}
         FROM match_record_player p
@@ -71,6 +79,10 @@ function createMatchRecordPlayerRepository(db) {
   return {
     /** @param {{recordId, guildMemberId, side, gameName, position, champion, kills, deaths, assists, cs, isWin}} row */
     insert: (row) => stmts.insert.run({ champion: null, ...row, isWin: row.isWin ? 1 : 0 }),
+    /** 데이터 적재: 판 전적을 다시 쓰기 전에 지운다 */
+    deleteByRecord: (recordId) => stmts.deleteByRecord.run(recordId),
+    /** 한 판의 참가자 전적 */
+    findByRecord: (recordId) => stmts.findByRecord.all(recordId),
     /** 대전의 모든 판 참가자 전적 (진행 중인 대전 포함) */
     findByMatch: (matchId) => stmts.findByMatch.all(matchId),
     getSummaryByMember: (guildMemberId) => stmts.getSummaryByMember.get(guildMemberId),

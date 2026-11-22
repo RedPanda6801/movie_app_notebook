@@ -29,9 +29,18 @@ function memberLabel(m) {
   return m.game_name ? `${name} (${m.game_name})` : name;
 }
 
-/** 입력창에 미리 채울 양식 */
+/**
+ * 입력창에 미리 채울 양식.
+ * 팀원에 이미 기록된 값(champion, kills ...)이 있으면 그 값으로 채운다. (데이터 적재 시 수정용)
+ */
 function buildStatTemplate(members) {
-  return members.map((m, i) => `${i + 1}. ${memberLabel(m)} : ${CHAMPION_PLACEHOLDER} 0/0/0/0`).join('\n');
+  return members
+    .map((m, i) => {
+      const champion = m.champion || CHAMPION_PLACEHOLDER;
+      const nums = m.kills != null ? `${m.kills}/${m.deaths}/${m.assists}/${m.cs}` : '0/0/0/0';
+      return `${i + 1}. ${memberLabel(m)} : ${champion} ${nums}`;
+    })
+    .join('\n');
 }
 
 /**

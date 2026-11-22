@@ -1,7 +1,13 @@
 const { MATCH_SIZE, POSITIONS, SIDES, SIDE_LABELS, UNDECIDED_LABEL } = require('../constants');
 const { UserError } = require('../utils/errors');
 const { positionLabel } = require('../utils/format');
-const { saveScreenshot, removeScreenshot } = require('../utils/screenshotStore');
+const {
+  saveScreenshot,
+  removeScreenshot,
+  findPendingScreenshot,
+  promotePendingScreenshot,
+} = require('../utils/screenshotStore');
+const adminViews = require('./adminViews');
 const { ACTIONS, buildId, parseId } = require('./ids');
 const views = require('./views');
 const statsViews = require('./statsViews');
@@ -418,7 +424,77 @@ const handlers = {
     await interaction.deferReply(); // CSV 파일 첨부
     return interaction.editReply(statsViews.guildStatsMessage(ctx.services.records.getGuildRecords(ctx.guild.id)));
   },
+
+  /* ───────────── /관리자 데이터적재 ───────────── */
+
+  async [ACTIONS.ADMIN_LOAD_OPEN](interaction, ctx, [matchId, gameNo, token]) {
+    requireAdmin(ctx);
+    const roster = ctx.services.admin.getGameRoster(ctx.guild.id, matchId, gameNo);
+    return interaction.showModal(adminViews.loadModal(roster, token));
+  },
+
+  async [ACTIONS.ADMIN_LOAD_MODAL](interaction, ctx, [matchId, gameNo, token, signature]) {
+    requireAdmin(ctx);
+    await interaction.deferReply(); // 캡쳐 파일 이동 + 결과 표시
+    const roster = ctx.services.admin.getGameRoster(ctx.guild.id, matchId, gameNo);
+    if (signature && signature !== roster.signature) {
+      throw new UserError('입력창을 연 뒤 이 판의 팀 구성이 바뀌었습니다. 다시 `/관리자 데이터적재`를 실행해 주세요.');
+    }
+    const winnerSide = interaction.fields.getStringSelectValues('winnerSide')[0];
+    const redText = interaction.fields.getTextInputValue('statsRED');
+    const blueText = interaction.fields.getTextInputValue('statsBLUE');
+    let stats;
+    try {
+      stats = [
+        ...parseStatLines(redText, roster.red, SIDE_LABELS.RED),
+        ...parseStatLines(blueText, roster.blue, SIDE_LABELS.BLUE),
+      ].map(({ member, ...st }) => ({ guildMemberId: member.guild_member_id, ...st }));
+    } catch (err) {
+      if (!(err instanceof UserError)) throw err;
+      throw new UserError(
+        `${err.message}\n\n위 미리보기의 [전적 입력]을 다시 눌러 아래 내용을 붙여넣고 고쳐 주세요.\n` +
+          `**${SIDE_LABELS.RED}**\n\`\`\`\n${redText}\n\`\`\`\n**${SIDE_LABELS.BLUE}**\n\`\`\`\n${blueText}\n\`\`\``.slice(0, 1700),
+      );
+    }
+
+    // 먼저 DB에 저장하고(검사 통과 시), 성공하면 대기 캡쳐를 이 판의 캡쳐로 옮긴다.
+    const pending = await findPendingScreenshot(ctx.config.recordsDir, interaction.guildId, token);
+    const result = ctx.services.admin.loadGameRecord({
+      guildId: ctx.guild.id,
+      discordUserId: interaction.user.id,
+      matchId,
+      gameNo,
+      signature: roster.signature,
+      winnerSide,
+      stats,
+    });
+    let note = '';
+    if (pending) {
+      const finalPath = await promotePendingScreenshot(pending, {
+        dir: ctx.config.recordsDir,
+        discordGuildId: interaction.guildId,
+        matchId: result.match.id,
+        gameNo: result.gameNo,
+      });
+      ctx.services.admin.setGameScreenshot(result.match.id, result.gameNo, finalPath);
+    } else {
+      note = '\n⚠️ 올린 이미지를 찾지 못해 캡쳐는 바꾸지 않았습니다. (하루가 지나 정리되었거나 이미 저장됨)';
+    }
+
+    const points = new Map(
+      result.players.map((p) => [p.discord_user_id, ctx.services.points.getStats(ctx.guild.id, p.discord_user_id).points]),
+    );
+    const message = adminViews.loadResultMessage(result, winnerSide, points);
+    if (note) message.content = note.trim();
+    await interaction.editReply(message);
+    if (result.match.status === 'IN_PROGRESS') await refreshMatchMessage(ctx.client, ctx.services, result.match.id);
+  },
 };
+
+/** 관리자 전용 버튼/입력창 (본인만 보이는 메시지라도 다시 확인한다) */
+function requireAdmin(ctx) {
+  if (!ctx.isAdmin) throw new UserError('권한이 없습니다. 관리자만 할 수 있습니다.');
+}
 
 /** 버튼/선택 메뉴/입력창을 처리한다. 처리할 수 없는 customId면 false */
 async function handleComponent(interaction, ctx) {
