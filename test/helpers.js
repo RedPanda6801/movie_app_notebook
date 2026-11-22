@@ -7,12 +7,13 @@ function setup({ random } = {}) {
   const guild = services.guilds.ensureGuild('guild-1', '테스트 서버');
   const users = Array.from({ length: 12 }, (_, i) => `user-${i + 1}`);
   const gameName = (u) => `lol${u.replace(/\W/g, "")}#KR1`;
+  // 계정 등록 때 롤 아이디를 함께 등록한다 (계정당 1개)
   const register = (u, g = guild) =>
-    services.accounts.register({ guildId: g.id, discordUserId: u, username: u });
-  const create = (u, gameCount = 3, g = guild) =>
-    services.matches.createMatch({ guildId: g.id, discordUserId: u, channelId: 'ch', gameCount, gameName: gameName(u) });
-  const join = (u, g = guild) =>
-    services.matches.join({ guildId: g.id, discordUserId: u, gameName: gameName(u) });
+    services.accounts.register({ guildId: g.id, discordUserId: u, username: u, gameName: gameName(u) });
+  // 대전 등록/참가는 계정의 롤 아이디를 쓰고, 포지션을 생략하면 선호 포지션
+  const create = (u, gameCount = 3, g = guild, extra = {}) =>
+    services.matches.createMatch({ guildId: g.id, discordUserId: u, channelId: 'ch', gameCount, ...extra });
+  const join = (u, g = guild, extra = {}) => services.matches.join({ guildId: g.id, discordUserId: u, ...extra });
   // 등록자 users[0] + 9명 참가 = 10명
   const fill = (gameCount = 3) => {
     users.slice(0, 10).forEach((u) => register(u));

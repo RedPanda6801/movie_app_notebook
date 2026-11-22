@@ -8,7 +8,14 @@ module.exports = {
     .addSubcommand((s) =>
       s.setName('관리').setDescription('이 채널에 [계정 등록]/[계정 탈퇴] 버튼 패널을 올립니다.'),
     )
-    .addSubcommand((s) => s.setName('등록').setDescription('(관리자 본인) 이 서버에 계정을 등록합니다.'))
+    .addSubcommand((s) =>
+      s
+        .setName('등록')
+        .setDescription('(관리자 본인) 롤 아이디와 함께 이 서버에 계정을 등록합니다.')
+        .addStringOption((o) =>
+          o.setName('아이디').setDescription('롤 아이디 (예: Hide on bush#KR1)').setRequired(true),
+        ),
+    )
     .addSubcommand((s) => s.setName('탈퇴').setDescription('(관리자 본인) 이 서버에서 계정을 탈퇴합니다.')),
 
   async execute(interaction, { services, guild }) {
@@ -26,6 +33,7 @@ module.exports = {
         discordUserId,
         username: interaction.user.username,
         displayName: interaction.member?.displayName ?? interaction.user.globalName ?? null,
+        gameName: interaction.options.getString('아이디', true),
       });
       return interaction.reply(
         reactivated

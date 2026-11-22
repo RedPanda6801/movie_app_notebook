@@ -77,13 +77,22 @@ function describeInteraction(interaction, labelFor = (a) => a) {
   const action = String(interaction.customId ?? '').split('|')[0];
   const label = labelFor(action) || action;
   if (interaction.isButton?.()) return `[버튼] ${label}`;
-  if (interaction.isStringSelectMenu?.()) return `[선택] ${label}: ${(interaction.values ?? []).join(', ')}`;
+  if (interaction.isStringSelectMenu?.() || interaction.isUserSelectMenu?.()) {
+    return `[선택] ${label}: ${(interaction.values ?? []).join(', ')}`;
+  }
   if (interaction.isModalSubmit?.()) {
     let detail = '';
     try {
       detail = interaction.fields.getTextInputValue('gameName');
     } catch {
       /* 롤 아이디 입력창이 아님 */
+    }
+    if (!detail) {
+      try {
+        detail = (interaction.fields.getStringSelectValues('position') || []).join(', ');
+      } catch {
+        /* 포지션 입력창이 아님 */
+      }
     }
     return `[입력] ${label}${detail ? `: ${detail}` : ''}`;
   }

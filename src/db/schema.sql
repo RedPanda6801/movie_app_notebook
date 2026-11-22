@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS account (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     discord_user_id TEXT    NOT NULL UNIQUE,
     username        TEXT,
-    last_game_name  TEXT,   -- 마지막으로 입력한 롤 아이디 (참가 입력창 기본값)
+    game_name       TEXT,   -- 계정의 롤 아이디 (계정당 1개, 다른 계정과 중복 불가)
+    preferred_position TEXT CHECK (preferred_position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')), -- 선호 포지션 (대전 참가 시 기본값)
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -75,27 +76,38 @@ CREATE TABLE IF NOT EXISTS match_participant (
     UNIQUE (match_id, guild_member_id)
 );
 
--- 판별 기록 (대전 1:N). 판마다 결과 캡쳐와 승리자를 남긴다.
+-- 판별 기록 (대전 1:N). 판마다 결과 캡쳐와 승리팀을 남긴다. 참가자별 전적은 match_record_player
 CREATE TABLE IF NOT EXISTS match_record (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     match_id        INTEGER NOT NULL REFERENCES match (id),
     game_no         INTEGER NOT NULL,              -- 몇 번째 판인지 (1부터)
-    winner_team_id  INTEGER REFERENCES team (id),  -- 팀 기준으로 기록한 경우만 (nullable)
+    winner_team_id  INTEGER REFERENCES team (id),  -- 승리팀 (v3부터 항상 기록, 이전 기록은 nullable)
     screenshot_path TEXT,                          -- 결과 캡쳐 파일 경로
     recorded_by     INTEGER REFERENCES guild_member (id),
     played_at       TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE (match_id, game_no)
 );
 
--- 판별 승리자 (판 1:N). 승리자 1명당 승점 1점
-CREATE TABLE IF NOT EXISTS match_record_winner (
+-- 판별 참가자 전적 (판 1:N, 판마다 10명). 팀 · K/D/A · CS · 승패. 승리 1회 = 승점 1점
+CREATE TABLE IF NOT EXISTS match_record_player (
     record_id       INTEGER NOT NULL REFERENCES match_record (id) ON DELETE CASCADE,
     guild_member_id INTEGER NOT NULL REFERENCES guild_member (id),
+    side            TEXT    CHECK (side IN ('RED', 'BLUE')),  -- 그 판의 팀 (1팀=RED, 2팀=BLUE)
+    game_name       TEXT,   -- 그 판 당시 롤 아이디
+    position        TEXT    CHECK (position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')),
+    champion        TEXT,   -- 그 판에 플레이한 챔피언 (피어리스: 대전 조회 시 판 순서대로 표시)
+    kills           INTEGER CHECK (kills >= 0),
+    deaths          INTEGER CHECK (deaths >= 0),
+    assists         INTEGER CHECK (assists >= 0),
+    cs              INTEGER CHECK (cs >= 0),
+    is_win          INTEGER NOT NULL CHECK (is_win IN (0, 1)),
     PRIMARY KEY (record_id, guild_member_id)
 );
 
+-- 롤 아이디는 계정 하나만 쓸 수 있다 (대소문자 무시)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_account_game_name ON account (lower(game_name)) WHERE game_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_guild_member_account ON guild_member (account_id);
 CREATE INDEX IF NOT EXISTS ix_match_guild ON match (guild_id);
 CREATE INDEX IF NOT EXISTS ix_participant_member ON match_participant (guild_member_id);
 CREATE INDEX IF NOT EXISTS ix_participant_team ON match_participant (team_id);
-CREATE INDEX IF NOT EXISTS ix_record_winner_member ON match_record_winner (guild_member_id);
+CREATE INDEX IF NOT EXISTS ix_record_player_member ON match_record_player (guild_member_id);

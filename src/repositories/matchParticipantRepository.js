@@ -26,6 +26,7 @@ function createMatchParticipantRepository(db) {
     ),
     delete: db.prepare('DELETE FROM match_participant WHERE id = ?'),
     updatePosition: db.prepare('UPDATE match_participant SET position = ? WHERE id = ?'),
+    updateGameName: db.prepare('UPDATE match_participant SET game_name = ? WHERE id = ?'),
     lockTeam: db.prepare('UPDATE match_participant SET team_id = ?, is_team_locked = 1 WHERE id = ?'),
     unlockTeam: db.prepare(
       'UPDATE match_participant SET team_id = NULL, is_team_locked = 0 WHERE id = ?',
@@ -34,15 +35,6 @@ function createMatchParticipantRepository(db) {
     resetShuffledByMatch: db.prepare(
       'UPDATE match_participant SET team_id = NULL WHERE match_id = ? AND is_team_locked = 0',
     ),
-    // 회원 1명의 전적 (종료된 대전의 판 기준) - 승점 조회용
-    getStatsByMember: db.prepare(`
-      SELECT COUNT(r.id) AS games,
-             COUNT(w.record_id) AS wins
-        FROM match_participant mp
-        JOIN match m ON m.id = mp.match_id AND m.status = 'FINISHED'
-        JOIN match_record r ON r.match_id = m.id
-        LEFT JOIN match_record_winner w ON w.record_id = r.id AND w.guild_member_id = mp.guild_member_id
-       WHERE mp.guild_member_id = ?`),
   };
 
   return {
@@ -58,12 +50,12 @@ function createMatchParticipantRepository(db) {
       Number(stmts.insert.run(matchId, guildMemberId, gameName).lastInsertRowid),
     delete: (id) => stmts.delete.run(id),
     updatePosition: (id, position) => stmts.updatePosition.run(position, id),
+    updateGameName: (id, gameName) => stmts.updateGameName.run(gameName, id),
     lockTeam: (id, teamId) => stmts.lockTeam.run(teamId, id),
     unlockTeam: (id) => stmts.unlockTeam.run(id),
     assignTeam: (id, teamId) => stmts.assignTeam.run(teamId, id),
     /** 셔플로 배정된 팀(직접 등록자 제외)을 초기화한다. */
     resetShuffledByMatch: (matchId) => stmts.resetShuffledByMatch.run(matchId),
-    getStatsByMember: (guildMemberId) => stmts.getStatsByMember.get(guildMemberId),
   };
 }
 

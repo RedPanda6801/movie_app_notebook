@@ -6,6 +6,13 @@ function createMatchRecordRepository(db) {
       VALUES (@matchId, @gameNo, @winnerTeamId, @screenshotPath, @recordedBy)`),
     countByMatch: db.prepare('SELECT COUNT(*) AS n FROM match_record WHERE match_id = ?'),
     findByMatch: db.prepare('SELECT * FROM match_record WHERE match_id = ? ORDER BY game_no'),
+    findByMatchAndGameNo: db.prepare('SELECT * FROM match_record WHERE match_id = ? AND game_no = ?'),
+    updateResult: db.prepare(`
+      UPDATE match_record
+         SET winner_team_id = @winnerTeamId,
+             screenshot_path = COALESCE(@screenshotPath, screenshot_path),
+             recorded_by = @recordedBy
+       WHERE id = @id`),
   };
 
   return {
@@ -17,6 +24,10 @@ function createMatchRecordRepository(db) {
     countByMatch: (matchId) => stmts.countByMatch.get(matchId).n,
     /** 판 순서대로 */
     findByMatch: (matchId) => stmts.findByMatch.all(matchId),
+    findByMatchAndGameNo: (matchId, gameNo) => stmts.findByMatchAndGameNo.get(matchId, gameNo) || null,
+    /** 데이터 적재: 이미 있는 판의 승리팀/캡쳐/기록자 갱신 (캡쳐가 null이면 그대로 둔다) */
+    updateResult: ({ id, winnerTeamId, screenshotPath = null, recordedBy = null }) =>
+      stmts.updateResult.run({ id, winnerTeamId, screenshotPath, recordedBy }),
   };
 }
 

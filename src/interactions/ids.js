@@ -6,6 +6,11 @@ const ACTIONS = {
   // /계정 관리 패널
   PANEL_REGISTER: 'panel.register',
   PANEL_WITHDRAW: 'panel.withdraw',
+  ACCOUNT_REGISTER_MODAL: 'account.registerModal', // 계정 등록 - 롤 아이디 입력
+  ACCOUNT_CHANGE_ID: 'account.changeId',
+  ACCOUNT_CHANGE_ID_MODAL: 'account.changeIdModal',
+  ACCOUNT_POSITION: 'account.position',
+  ACCOUNT_POSITION_SELECT: 'account.positionSelect',
   // /대전 관리 패널
   PANEL_CREATE: 'panel.create',
   PANEL_ACTIVE: 'panel.active',
@@ -29,6 +34,16 @@ const ACTIONS = {
   RECORD_MODAL: 'control.recordModal', // |<matchId>|<판 번호>
   FINISH: 'control.finish',
   CANCEL: 'control.cancel',
+  // /전적 관리 패널
+  STATS_BY_MATCH: 'stats.byMatch',
+  STATS_MATCH_SELECT: 'stats.matchSelect',
+  STATS_GAME_SELECT: 'stats.gameSelect', // |<matchId>
+  STATS_BY_MEMBER: 'stats.byMember',
+  STATS_MEMBER_SELECT: 'stats.memberSelect',
+  STATS_ALL: 'stats.all',
+  // /관리자 데이터적재
+  ADMIN_LOAD_OPEN: 'admin.loadOpen', // |<matchId>|<판>|<대기 캡쳐 토큰>
+  ADMIN_LOAD_MODAL: 'admin.loadModal', // |<matchId>|<판>|<토큰>|<팀 구성 서명>
 };
 
 /** 로그에 남길 이름 */
@@ -37,10 +52,15 @@ const ACTION_LABELS = {
   [ACTIONS.PANEL_ACTIVE]: '진행중인 대전 조회',
   [ACTIONS.PANEL_REGISTER]: '계정 등록',
   [ACTIONS.PANEL_WITHDRAW]: '계정 탈퇴',
+  [ACTIONS.ACCOUNT_REGISTER_MODAL]: '계정 등록 - 롤 아이디 입력',
+  [ACTIONS.ACCOUNT_CHANGE_ID]: '아이디 변경',
+  [ACTIONS.ACCOUNT_CHANGE_ID_MODAL]: '아이디 변경 - 롤 아이디 입력',
+  [ACTIONS.ACCOUNT_POSITION]: '선호 포지션',
+  [ACTIONS.ACCOUNT_POSITION_SELECT]: '선호 포지션 선택',
   [ACTIONS.CREATE_GAMES]: '대전 등록 - 판 수 선택',
-  [ACTIONS.CREATE_MODAL]: '대전 등록 - 롤 아이디 입력',
+  [ACTIONS.CREATE_MODAL]: '대전 등록 - 포지션 선택',
   [ACTIONS.JOIN]: '대전 참가',
-  [ACTIONS.JOIN_MODAL]: '대전 참가 - 롤 아이디 입력',
+  [ACTIONS.JOIN_MODAL]: '대전 참가 - 포지션 선택',
   [ACTIONS.LEAVE]: '대전 탈퇴',
   [ACTIONS.VIEW]: '대전 조회',
   [ACTIONS.POSITION]: '포지션 등록/변경',
@@ -54,6 +74,14 @@ const ACTION_LABELS = {
   [ACTIONS.RECORD_MODAL]: '대전 기록 - 결과 입력',
   [ACTIONS.FINISH]: '대전 종료',
   [ACTIONS.CANCEL]: '대전 취소',
+  [ACTIONS.STATS_BY_MATCH]: '대전별 전적 조회',
+  [ACTIONS.STATS_MATCH_SELECT]: '대전별 전적 - 대전 선택',
+  [ACTIONS.STATS_GAME_SELECT]: '대전별 전적 - 판 선택',
+  [ACTIONS.STATS_BY_MEMBER]: '개인별 전적 조회',
+  [ACTIONS.STATS_MEMBER_SELECT]: '개인별 전적 - 계정 선택',
+  [ACTIONS.STATS_ALL]: '전체 전적 조회',
+  [ACTIONS.ADMIN_LOAD_OPEN]: '데이터적재 - 전적 입력',
+  [ACTIONS.ADMIN_LOAD_MODAL]: '데이터적재 - 저장',
 };
 
 function buildId(action, ...args) {
