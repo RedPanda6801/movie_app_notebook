@@ -5,11 +5,14 @@ const { createServices } = require('./services');
 const { commands } = require('./commands');
 const { createInteractionHandler } = require('./interactions/router');
 const { createCommandLogger } = require('./utils/commandLogger');
+const { createGeminiReader } = require('./integrations/geminiScoreboard');
 
 const db = openDatabase(config.databasePath);
 const services = createServices(db);
 const commandMap = new Map(commands.map((c) => [c.data.name, c]));
 const commandLogger = createCommandLogger({ dir: config.logDir, timeZone: config.logTimeZone });
+// /관리자 데이터적재 이미지 자동 읽기 (GEMINI_API_KEY가 없으면 꺼짐 → 관리자가 직접 입력)
+const geminiReader = createGeminiReader({ apiKey: config.geminiApiKey, model: config.geminiModel });
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -23,6 +26,7 @@ client.once(Events.ClientReady, (c) => {
     services.guilds.ensureGuild(guild.id, guild.name);
   }
   console.log(`${c.user.tag} 로그인 완료 · 서버 ${c.guilds.cache.size}개`);
+  console.log(geminiReader.enabled ? `데이터적재 이미지 자동 읽기: Gemini (${geminiReader.model})` : '데이터적재 이미지 자동 읽기: 꺼짐 (GEMINI_API_KEY 없음)');
 });
 
 // [자동] 봇이 서버에 참가하면 서버를 등록한다.
@@ -40,7 +44,7 @@ client.on(Events.GuildDelete, (guild) => {
 // 슬래시 커맨드(관리자 전용) + 버튼/선택 메뉴/입력창(모든 사용자)
 client.on(
   Events.InteractionCreate,
-  createInteractionHandler({ services, commandMap, commandLogger, config, client }),
+  createInteractionHandler({ services, commandMap, commandLogger, config, client, geminiReader }),
 );
 
 function shutdown() {

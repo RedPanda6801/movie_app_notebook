@@ -20,4 +20,7 @@ module.exports = {
   logDir: process.env.LOG_DIR || 'logs',
   recordsDir: process.env.RECORDS_DIR || 'data/records',
   logTimeZone: process.env.LOG_TIMEZONE || 'Asia/Seoul',
+  // (선택) /관리자 데이터적재 이미지 자동 읽기. 키가 없으면 관리자가 직접 입력한다.
+  geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null,
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
 };
