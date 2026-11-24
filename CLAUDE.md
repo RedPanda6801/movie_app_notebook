@@ -307,6 +307,14 @@ customId 규칙: `<action>|<인자...>` (`src/interactions/ids.js`). 대전 관�
 
 `/대전 결과`(팀 기준 기록)는 K/D/A/CS를 받을 수 없어 v3에서 제거했다. 판 기록은 관리 패널의 [대전 기록]으로만 한다.
 
+## 결과 캡쳐 → 입력 양식 변환 도구 (`scripts/gemini-scoreboard.mjs`, 선택)
+
+- 봇과 **별개인 PC용 CLI**다. 봇은 이미지를 자동으로 읽지 않는다(관리자 직접 입력 방식 유지).
+- `npm run scoreboard -- <이미지> [양식 파일]` (양식은 파일 또는 표준 입력): 결과 이미지 + 입력창 양식을 Gemini(`@google/genai`, 기본 `gemini-flash-latest`)에 보내고, 채워진 양식 텍스트를 출력한다. 관리자가 확인 후 입력창에 붙여넣는다.
+- Gemini에게는 참가자 번호별 `champion / kills / deaths / assists / cs`만 **JSON(responseJsonSchema)**으로 받고, 줄 모양은 스크립트가 양식 그대로 만든다(형식 오류 방지). 못 찾은 줄은 `챔피언 0/0/0/0`으로 두고 경고한다.
+- 4번째 값은 기본 CS(봇 입력창 형식). `--fourth kda`는 (킬+어시)/데스 소수 첫째 자리.
+- `GEMINI_API_KEY`(`.env`), 선택 `GEMINI_MODEL`.
+
 ## 로그 (`src/utils/commandLogger.js`)
 
 - 모든 슬래시 커맨드와 버튼/선택 메뉴/입력창 실행을 **서버별 텍스트 파일**에 한 줄씩 남긴다: `logs/<디스코드 서버 ID>.log` (서버 밖 DM은 `logs/direct-message.log`)
@@ -372,6 +380,7 @@ src/
   utils/                # UserError, Embed 포맷, 로그, 결과 캡쳐 저장, 텍스트 표(한글 폭 맞춤)
 data/                   # bot.sqlite, records/<서버 ID>/ 결과 캡쳐 (git 제외)
 logs/                   # 서버별 로그 (<서버 ID>.log, git 제외)
+scripts/gemini-scoreboard.mjs # 결과 캡쳐 → 입력 양식 텍스트 (Gemini CLI, 선택)
 test/                   # node:test 기반 테스트 (npm test)
 ```
 
