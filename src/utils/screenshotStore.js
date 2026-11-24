@@ -54,27 +54,6 @@ async function findPendingScreenshot(dir, discordGuildId, token) {
   }
 }
 
-function pendingDataPath(dir, discordGuildId, token) {
-  return path.join(guildDirOf(dir, discordGuildId), `${PENDING_PREFIX}${String(token).replace(/[^0-9A-Za-z_-]/g, '')}-read.json`);
-}
-
-/** 데이터 적재: 이미지 자동 인식 결과를 대기 캡쳐 옆에 저장 */
-async function savePendingData(dir, discordGuildId, token, data) {
-  await fs.promises.writeFile(pendingDataPath(dir, discordGuildId, token), JSON.stringify(data), 'utf8');
-}
-
-async function readPendingData(dir, discordGuildId, token) {
-  try {
-    return JSON.parse(await fs.promises.readFile(pendingDataPath(dir, discordGuildId, token), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-async function removePendingData(dir, discordGuildId, token) {
-  await fs.promises.rm(pendingDataPath(dir, discordGuildId, token), { force: true });
-}
-
 /** 대기 중인 캡쳐를 그 판의 캡쳐로 옮긴다. (이전 캡쳐는 지운다) */
 async function promotePendingScreenshot(pendingPath, { dir, discordGuildId, matchId, gameNo }) {
   const guildDir = guildDirOf(dir, discordGuildId);
@@ -103,6 +82,28 @@ async function cleanupPendingScreenshots(dir, discordGuildId, now = Date.now()) 
   }
 }
 
+function pendingReadingPath(dir, discordGuildId, token) {
+  return path.join(guildDirOf(dir, discordGuildId), `${PENDING_PREFIX}${String(token).replace(/[^0-9A-Za-z_-]/g, '')}-read.json`);
+}
+
+/** 데이터 적재: Gemini가 읽은 값을 저장 전까지 보관한다. (입력창을 열 때 미리 채우는 용도) */
+async function savePendingReading(dir, discordGuildId, token, reading) {
+  await fs.promises.mkdir(guildDirOf(dir, discordGuildId), { recursive: true });
+  await fs.promises.writeFile(pendingReadingPath(dir, discordGuildId, token), JSON.stringify(reading), 'utf8');
+}
+
+async function readPendingReading(dir, discordGuildId, token) {
+  try {
+    return JSON.parse(await fs.promises.readFile(pendingReadingPath(dir, discordGuildId, token), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function removePendingReading(dir, discordGuildId, token) {
+  await fs.promises.rm(pendingReadingPath(dir, discordGuildId, token), { force: true });
+}
+
 async function removeScreenshot(filePath) {
   if (!filePath) return;
   await fs.promises.rm(filePath, { force: true });
@@ -114,8 +115,8 @@ module.exports = {
   findPendingScreenshot,
   promotePendingScreenshot,
   cleanupPendingScreenshots,
-  savePendingData,
-  readPendingData,
-  removePendingData,
+  savePendingReading,
+  readPendingReading,
+  removePendingReading,
   PENDING_PREFIX,
 };

@@ -44,7 +44,6 @@ const ACTIONS = {
   // /관리자 데이터적재
   ADMIN_LOAD_OPEN: 'admin.loadOpen', // |<matchId>|<판>|<대기 캡쳐 토큰>
   ADMIN_LOAD_MODAL: 'admin.loadModal', // |<matchId>|<판>|<토큰>|<팀 구성 서명>
-  ADMIN_LOAD_CONFIRM: 'admin.loadConfirm', // |<matchId>|<판>|<토큰> 이미지 인식 결과 그대로 저장
 };
 
 /** 로그에 남길 이름 */
@@ -83,7 +82,6 @@ const ACTION_LABELS = {
   [ACTIONS.STATS_ALL]: '전체 전적 조회',
   [ACTIONS.ADMIN_LOAD_OPEN]: '데이터적재 - 전적 입력',
   [ACTIONS.ADMIN_LOAD_MODAL]: '데이터적재 - 저장',
-  [ACTIONS.ADMIN_LOAD_CONFIRM]: '데이터적재 - 인식 결과 저장',
 };
 
 function buildId(action, ...args) {

@@ -6,10 +6,10 @@ const {
   removeScreenshot,
   findPendingScreenshot,
   promotePendingScreenshot,
-  readPendingData,
-  removePendingData,
+  readPendingReading,
+  removePendingReading,
 } = require('../utils/screenshotStore');
-const { overlayRecognition } = require('../integrations/scoreboardReader');
+const { applyReading } = require('../integrations/geminiScoreboard');
 const adminViews = require('./adminViews');
 const { ACTIONS, buildId, parseId } = require('./ids');
 const views = require('./views');
@@ -433,33 +433,9 @@ const handlers = {
   async [ACTIONS.ADMIN_LOAD_OPEN](interaction, ctx, [matchId, gameNo, token]) {
     requireAdmin(ctx);
     const roster = ctx.services.admin.getGameRoster(ctx.guild.id, matchId, gameNo);
-    // 이미지 자동 인식 결과가 있으면 입력창을 그 값으로 미리 채운다.
-    const recognition = await readPendingData(ctx.config.recordsDir, interaction.guildId, token);
-    const usable = recognition?.ok && (!recognition.signature || recognition.signature === roster.signature);
-    return interaction.showModal(adminViews.loadModal(usable ? overlayRecognition(roster, recognition) : roster, token));
-  },
-
-  /** 이미지 인식 결과 그대로 저장 */
-  async [ACTIONS.ADMIN_LOAD_CONFIRM](interaction, ctx, [matchId, gameNo, token]) {
-    requireAdmin(ctx);
-    await interaction.deferReply();
-    const roster = ctx.services.admin.getGameRoster(ctx.guild.id, matchId, gameNo);
-    const recognition = await readPendingData(ctx.config.recordsDir, interaction.guildId, token);
-    if (!recognition?.ok || !recognition.complete) {
-      throw new UserError('저장할 인식 결과가 없습니다. (하루가 지났거나 이미 저장됨) [전적 입력]으로 입력하거나 다시 실행해 주세요.');
-    }
-    if (recognition.signature && recognition.signature !== roster.signature) {
-      throw new UserError('이미지를 읽은 뒤 이 판의 팀 구성이 바뀌었습니다. 다시 `/관리자 데이터적재`를 실행해 주세요.');
-    }
-    const stats = recognition.stats.map(({ guildMemberId, champion, kills, deaths, assists, cs }) => ({
-      guildMemberId,
-      champion,
-      kills,
-      deaths,
-      assists,
-      cs,
-    }));
-    return saveLoadedGame(interaction, ctx, { matchId, gameNo, token, signature: roster.signature, winnerSide: recognition.winnerSide, stats });
+    // Gemini가 읽었지만 저장하지 못한 값이 있으면 그 값으로 미리 채운다.
+    const reading = token === adminViews.EDIT_TOKEN ? null : await readPendingReading(ctx.config.recordsDir, interaction.guildId, token);
+    return interaction.showModal(adminViews.loadModal(applyReading(roster, reading), token));
   },
 
   async [ACTIONS.ADMIN_LOAD_MODAL](interaction, ctx, [matchId, gameNo, token, signature]) {
@@ -485,46 +461,42 @@ const handlers = {
           `**${SIDE_LABELS.RED}**\n\`\`\`\n${redText}\n\`\`\`\n**${SIDE_LABELS.BLUE}**\n\`\`\`\n${blueText}\n\`\`\``.slice(0, 1700),
       );
     }
-    return saveLoadedGame(interaction, ctx, { matchId, gameNo, token, signature: roster.signature, winnerSide, stats });
+
+    // 먼저 DB에 저장하고(검사 통과 시), 성공하면 대기 캡쳐를 이 판의 캡쳐로 옮긴다.
+    const editOnly = token === adminViews.EDIT_TOKEN; // 자동 저장 뒤 [수정]: 캡쳐는 이미 저장됨
+    const pending = editOnly ? null : await findPendingScreenshot(ctx.config.recordsDir, interaction.guildId, token);
+    const result = ctx.services.admin.loadGameRecord({
+      guildId: ctx.guild.id,
+      discordUserId: interaction.user.id,
+      matchId,
+      gameNo,
+      signature: roster.signature,
+      winnerSide,
+      stats,
+    });
+    let note = '';
+    if (pending) {
+      const finalPath = await promotePendingScreenshot(pending, {
+        dir: ctx.config.recordsDir,
+        discordGuildId: interaction.guildId,
+        matchId: result.match.id,
+        gameNo: result.gameNo,
+      });
+      ctx.services.admin.setGameScreenshot(result.match.id, result.gameNo, finalPath);
+    } else if (!editOnly) {
+      note = '\n⚠️ 올린 이미지를 찾지 못해 캡쳐는 바꾸지 않았습니다. (하루가 지나 정리되었거나 이미 저장됨)';
+    }
+
+    if (!editOnly) await removePendingReading(ctx.config.recordsDir, interaction.guildId, token);
+
+    const points = new Map(
+      result.players.map((p) => [p.discord_user_id, ctx.services.points.getStats(ctx.guild.id, p.discord_user_id).points]),
+    );
+    const message = adminViews.loadResultMessage(result, winnerSide, points);
+    if (note) message.content = note.trim();
+    await interaction.editReply(message);
   },
 };
-
-/**
- * 데이터 적재 저장 공통: DB 저장(검사 통과 시) → 대기 캡쳐를 그 판의 캡쳐로 옮김 → 결과 표시
- * (호출 전에 deferReply 되어 있어야 한다)
- */
-async function saveLoadedGame(interaction, ctx, { matchId, gameNo, token, signature, winnerSide, stats }) {
-  const pending = await findPendingScreenshot(ctx.config.recordsDir, interaction.guildId, token);
-  const result = ctx.services.admin.loadGameRecord({
-    guildId: ctx.guild.id,
-    discordUserId: interaction.user.id,
-    matchId,
-    gameNo,
-    signature,
-    winnerSide,
-    stats,
-  });
-  let note = '';
-  if (pending) {
-    const finalPath = await promotePendingScreenshot(pending, {
-      dir: ctx.config.recordsDir,
-      discordGuildId: interaction.guildId,
-      matchId: result.match.id,
-      gameNo: result.gameNo,
-    });
-    ctx.services.admin.setGameScreenshot(result.match.id, result.gameNo, finalPath);
-  } else {
-    note = '⚠️ 올린 이미지를 찾지 못해 캡쳐는 바꾸지 않았습니다. (하루가 지나 정리되었거나 이미 저장됨)';
-  }
-  await removePendingData(ctx.config.recordsDir, interaction.guildId, token);
-
-  const points = new Map(
-    result.players.map((p) => [p.discord_user_id, ctx.services.points.getStats(ctx.guild.id, p.discord_user_id).points]),
-  );
-  const message = adminViews.loadResultMessage(result, winnerSide, points);
-  if (note) message.content = note;
-  return interaction.editReply(message);
-}
 
 /** 관리자 전용 버튼/입력창 (본인만 보이는 메시지라도 다시 확인한다) */
 function requireAdmin(ctx) {

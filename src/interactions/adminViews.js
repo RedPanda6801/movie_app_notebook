@@ -17,7 +17,6 @@ const { COLORS, mention, positionLabel } = require('../utils/format');
 const { renderTable } = require('../utils/textTable');
 const { buildStatTemplate } = require('../services/statInput');
 const { ACTIONS, buildId } = require('./ids');
-const { overlayRecognition } = require('../integrations/scoreboardReader');
 
 const MEMBER_STATUS_LABELS = { ACTIVE: '가입', WITHDRAWN: '탈퇴' };
 
@@ -130,61 +129,39 @@ function rosterFields(roster) {
 }
 
 /**
- * 적재 전 미리보기: 찾은 대전/판 + 올린 이미지 + (자동 인식 결과 또는 지금 기록) + 버튼
- * - 자동 인식 성공 & 빠짐없음: [✅ 이대로 저장] [📝 수정 후 저장]
- * - 일부만 인식 / 인식 실패 / 자동 인식 꺼짐: [📝 전적 입력] (인식한 값은 입력창에 미리 채워짐)
+ * 적재 전 미리보기: 찾은 대전/판 + 올린 이미지 + 지금 기록(또는 Gemini가 읽은 값) + [전적 입력] 버튼
+ * @param {{ notice?: string[] }} options notice: 설명 위에 붙일 안내 (Gemini 결과 등)
  */
-function loadPreviewMessage(roster, pendingPath, token, recognition = null, readerEnabled = false) {
+function loadPreviewMessage(roster, pendingPath, token, { notice = [] } = {}) {
   const { match, gameNo, record } = roster;
-  const shown = overlayRecognition(roster, recognition);
   const name = `upload${path.extname(pendingPath)}`;
-
-  const lines = [
-    `상태: **${MATCH_STATUS_LABELS[match.status]}** · ${match.game_count}판 중 ${gameNo}판 · ${record ? '기존 기록을 **덮어씁니다**' : '**새 기록**을 만듭니다'}`,
-    '',
-  ];
-  if (recognition?.ok && recognition.complete) {
-    lines.push('🤖 이미지를 읽어 아래처럼 채웠습니다. 맞으면 **[이대로 저장]**, 고칠 곳이 있으면 **[수정 후 저장]**을 눌러 주세요.');
-  } else if (recognition?.ok) {
-    lines.push('🤖 이미지를 읽었지만 **일부를 확인하지 못했습니다.** [전적 입력]에서 빈 곳을 채우고 저장해 주세요. (읽은 값은 미리 채워져 있습니다)');
-  } else if (recognition && !recognition.ok) {
-    lines.push(`⚠️ 이미지 자동 인식 실패: ${recognition.error}`, '이미지를 보고 [전적 입력]으로 직접 입력해 주세요.');
-  } else if (!readerEnabled) {
-    lines.push('이미지 자동 인식이 꺼져 있습니다. (SCOREBOARD_PROVIDER 미설정) 이미지를 보고 [전적 입력]으로 입력해 주세요.');
-  }
-  lines.push('저장하면 이 판의 기록과 승점이 갱신되고, 이미지는 이 판의 결과 캡쳐로 저장됩니다.');
-
   const embed = new EmbedBuilder()
     .setTitle(`🛠️ 데이터 적재 · 대전 #${match.id} ${gameNo}판`)
-    .setColor(recognition?.ok && recognition.complete ? COLORS.GREEN : COLORS.BLUE)
-    .setDescription(lines.join('\n'))
-    .addFields(rosterFields(shown))
+    .setColor(COLORS.BLUE)
+    .setDescription(
+      [
+        `상태: **${MATCH_STATUS_LABELS[match.status]}** · ${match.game_count}판 중 ${gameNo}판 · ${record ? '기존 기록을 **덮어씁니다**' : '**새 기록**을 만듭니다'}`,
+        '',
+        ...(notice.length
+          ? notice
+          : ['아래 이미지를 보고 **[전적 입력]**을 눌러 승리팀과 챔피언 · K/D/A · CS를 입력해 주세요.']),
+        '저장하면 이 판의 기록과 승점이 갱신되고, 이미지는 이 판의 결과 캡쳐로 저장됩니다.',
+      ]
+        .join('\n')
+        .slice(0, 4000),
+    )
+    .addFields(rosterFields(roster))
     .setImage(`attachment://${name}`);
-  if (recognition?.warnings?.length) {
-    embed.addFields({ name: '⚠️ 확인할 점', value: recognition.warnings.map((w) => `• ${w}`).join('\n').slice(0, 1024) });
-  }
-  if (recognition?.ok) embed.setFooter({ text: `자동 인식: ${recognition.model} · 잘못 읽을 수 있으니 저장 전에 확인해 주세요.` });
-
-  const buttons = [];
-  if (recognition?.ok && recognition.complete) {
-    buttons.push(
-      new ButtonBuilder()
-        .setCustomId(buildId(ACTIONS.ADMIN_LOAD_CONFIRM, match.id, gameNo, token))
-        .setLabel('이대로 저장')
-        .setEmoji('✅')
-        .setStyle(ButtonStyle.Success),
-    );
-  }
-  buttons.push(
+  const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(buildId(ACTIONS.ADMIN_LOAD_OPEN, match.id, gameNo, token))
-      .setLabel(recognition?.ok && recognition.complete ? '수정 후 저장' : '전적 입력')
+      .setLabel('전적 입력')
       .setEmoji('📝')
-      .setStyle(recognition?.ok && recognition.complete ? ButtonStyle.Secondary : ButtonStyle.Primary),
+      .setStyle(ButtonStyle.Primary),
   );
   return {
     embeds: [embed],
-    components: [new ActionRowBuilder().addComponents(...buttons)],
+    components: [row],
     files: fs.existsSync(pendingPath) ? [new AttachmentBuilder(pendingPath, { name })] : [],
   };
 }
@@ -228,8 +205,14 @@ function loadModal(roster, token) {
     );
 }
 
-/** 적재 결과: 저장된 판 + 10명의 갱신된 승점 */
-function loadResultMessage(result, winnerSide, pointsByUser) {
+/** 저장 후 다시 고칠 때 쓰는 토큰 (올린 이미지 없음) */
+const EDIT_TOKEN = '-';
+
+/**
+ * 적재 결과: 저장된 판 + 10명의 갱신된 승점
+ * @param {{ auto?: { model: string, warnings: string[] } }} options auto: Gemini가 읽은 값으로 자동 저장했을 때
+ */
+function loadResultMessage(result, winnerSide, pointsByUser, { auto = null } = {}) {
   const { match, gameNo, created, players } = result;
   const fields = ['RED', 'BLUE'].map((side) => ({
     name: `${side === 'RED' ? '🔴' : '🔵'} ${SIDE_LABELS[side]}${winnerSide === side ? ' 🏆 승' : ' 패'}`,
@@ -243,10 +226,27 @@ function loadResultMessage(result, winnerSide, pointsByUser) {
     .setTitle(`✅ 대전 #${match.id} ${gameNo}판 데이터 적재 완료`)
     .setColor(COLORS.GREEN)
     .setDescription(
-      `${created ? '새 기록을 만들었습니다.' : '기존 기록을 갱신했습니다.'} 승점은 종료된 대전 기준 누적 값입니다.`,
+      [
+        ...(auto ? [`🤖 **Gemini(${auto.model})가 이미지에서 읽은 값으로 저장했습니다.** 틀린 곳이 있으면 **[수정]**을 눌러 고쳐 주세요.`] : []),
+        `${created ? '새 기록을 만들었습니다.' : '기존 기록을 갱신했습니다.'} 승점은 종료된 대전 기준 누적 값입니다.`,
+        ...(auto?.warnings || []).map((w) => `⚠️ ${w}`),
+      ]
+        .join('\n')
+        .slice(0, 4000),
     )
     .addFields(fields);
-  return { content: '', embeds: [embed], components: [], files: [], attachments: [] };
+  const components = auto
+    ? [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(buildId(ACTIONS.ADMIN_LOAD_OPEN, match.id, gameNo, EDIT_TOKEN))
+            .setLabel('수정')
+            .setEmoji('✏️')
+            .setStyle(ButtonStyle.Secondary),
+        ),
+      ]
+    : [];
+  return { content: '', embeds: [embed], components, files: [], attachments: [] };
 }
 
-module.exports = { accountTableMessage, accountsCsv, accountRows, loadPreviewMessage, loadModal, loadResultMessage };
+module.exports = { accountTableMessage, accountsCsv, accountRows, loadPreviewMessage, loadModal, loadResultMessage, EDIT_TOKEN };
