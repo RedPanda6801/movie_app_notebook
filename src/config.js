@@ -22,5 +22,5 @@ module.exports = {
   logTimeZone: process.env.LOG_TIMEZONE || 'Asia/Seoul',
   // (선택) /관리자 데이터적재 이미지 자동 읽기. 키가 없으면 관리자가 직접 입력한다.
   geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || null,
-  geminiModel: (process.env.GEMINI_MODEL || '').trim() || 'gemini-flash-latest',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
 };
