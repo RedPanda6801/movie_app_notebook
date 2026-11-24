@@ -160,7 +160,11 @@ function describeGeminiError(err) {
   if (/API_KEY_INVALID|API key not valid/i.test(message)) return 'API 키가 올바르지 않습니다. 봇의 .env GEMINI_API_KEY를 확인해 주세요.';
   if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return '응답이 너무 오래 걸려 중단했습니다.';
   if (status === 401 || status === 403) return 'API 키가 올바르지 않거나 권한이 없습니다.';
-  if (status === 404) return `모델을 찾을 수 없습니다. GEMINI_MODEL을 확인해 주세요.`;
+  if (status === 404) {
+    const model = err?.model ? ` (${err.model})` : '';
+    const hint = err?.available?.length ? ` 사용 가능한 모델 예: ${err.available.slice(0, 5).join(', ')}` : '';
+    return `모델을 찾을 수 없습니다${model}. .env의 GEMINI_MODEL을 확인하거나 비워 두세요.${hint}`;
+  }
   if (status === 429) return '무료 사용량(요청 한도)을 넘었습니다. 잠시 후 다시 시도해 주세요.';
   if (status >= 500) return `Gemini 서버 오류 (${status}). 잠시 후 다시 시도해 주세요.`;
   return message.slice(0, 300);
@@ -173,6 +177,7 @@ function describeGeminiError(err) {
 function createGeminiReader({ apiKey = null, model = DEFAULT_MODEL, ai = null, timeoutMs = TIMEOUT_MS } = {}) {
   let client = ai;
   const enabled = Boolean(ai || apiKey);
+  let currentModel = String(model || DEFAULT_MODEL).trim().replace(/^models\//, '') || DEFAULT_MODEL;
 
   function getClient() {
     if (!client) {
@@ -190,16 +195,30 @@ function createGeminiReader({ apiKey = null, model = DEFAULT_MODEL, ai = null, t
     if (!enabled) throw new Error('Gemini API 키가 설정되지 않았습니다.');
     const type = String(mimeType || '').toLowerCase();
     if (!SUPPORTED_MIME.has(type)) throw new Error('Gemini는 png · jpg · webp 이미지만 읽을 수 있습니다.');
-    const response = await getClient().models.generateContent({
-      model,
-      contents: [{ inlineData: { mimeType: type, data: image.toString('base64') } }, { text: buildPrompt(roster) }],
-      config: {
-        temperature: 0,
-        responseMimeType: 'application/json',
-        responseJsonSchema: RESPONSE_SCHEMA,
-        abortSignal: AbortSignal.timeout(timeoutMs),
-      },
-    });
+    const request = (name) =>
+      getClient().models.generateContent({
+        model: name,
+        contents: [{ inlineData: { mimeType: type, data: image.toString('base64') } }, { text: buildPrompt(roster) }],
+        config: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseJsonSchema: RESPONSE_SCHEMA,
+          abortSignal: AbortSignal.timeout(timeoutMs),
+        },
+      });
+    let response;
+    try {
+      response = await request(currentModel);
+    } catch (err) {
+      if (err?.status !== 404) throw err;
+      // 모델 이름이 없어졌거나 틀렸으면, 이 키로 쓸 수 있는 모델 중 flash 모델로 한 번 다시 시도한다.
+      const available = await listGenerateModels().catch(() => []);
+      const fallback = pickFallbackModel(available, currentModel);
+      if (!fallback) throw Object.assign(err, { model: currentModel, available });
+      console.warn(`Gemini 모델 ${currentModel}을(를) 찾을 수 없어 ${fallback}(으)로 바꿉니다. (.env GEMINI_MODEL로 고정할 수 있습니다)`);
+      response = await request(fallback);
+      currentModel = fallback;
+    }
     const finish = response.candidates?.[0]?.finishReason;
     if (finish && finish !== 'STOP') throw new Error(`Gemini 응답이 정상적으로 끝나지 않았습니다 (${finish}).`);
     const text = response.text;
@@ -213,7 +232,42 @@ function createGeminiReader({ apiKey = null, model = DEFAULT_MODEL, ai = null, t
     return { ...interpretReading(roster, raw), raw };
   }
 
-  return { enabled, model, read };
+  /** 이 키로 generateContent를 쓸 수 있는 모델 이름 목록 */
+  async function listGenerateModels() {
+    const names = [];
+    const pager = await getClient().models.list({ config: { pageSize: 100 } });
+    for await (const m of pager) {
+      const actions = m.supportedActions || m.supportedGenerationMethods || [];
+      if (actions.includes('generateContent')) names.push(String(m.name || '').replace(/^models\//, ''));
+    }
+    return names.filter(Boolean);
+  }
+
+  return {
+    enabled,
+    get model() {
+      return currentModel;
+    },
+    read,
+  };
+}
+
+/**
+ * 대신 쓸 모델 고르기: 이미지 · JSON 출력이 되는 일반 gemini flash 모델 중 버전이 가장 높은 것.
+ * (preview / exp / tts / image / live 같은 특수 모델은 뺀다)
+ */
+function pickFallbackModel(names, exclude = null) {
+  const special = /(preview|exp|tts|image|live|audio|embedding|thinking|learnlm|gemma|robotics|computer)/i;
+  const version = (n) => Number((/gemini-(\d+(?:\.\d+)?)/.exec(n) || [])[1] || 0);
+  const candidates = names.filter((n) => /^gemini-/.test(n) && !special.test(n) && n !== exclude);
+  const rank = (n) => [n === 'gemini-flash-latest' ? 1 : 0, /flash/.test(n) ? 1 : 0, /lite/.test(n) ? 0 : 1, version(n)];
+  candidates.sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    for (let i = 0; i < ra.length; i += 1) if (ra[i] !== rb[i]) return rb[i] - ra[i];
+    return a.localeCompare(b);
+  });
+  return candidates[0] || null;
 }
 
 /** 읽은 값을 판 구성에 덮어 입력창/미리보기에 쓸 수 있게 한다. (못 읽은 사람은 기존 값 유지) */
@@ -240,4 +294,5 @@ module.exports = {
   applyReading,
   describeGeminiError,
   createGeminiReader,
+  pickFallbackModel,
 };
