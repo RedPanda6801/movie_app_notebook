@@ -115,7 +115,7 @@
   - 커맨드의 "계정 등록/탈퇴"는 **해당 서버의 guild_member 등록/탈퇴**를 뜻한다. `account`는 처음 등록할 때 자동으로 만들어진다.
   - 그래서 A 서버에서 탈퇴해도 B 서버의 가입과 승점에는 영향이 없다.
 - **서버 ↔ 대전 = 1:N**: 대전은 반드시 하나의 서버에 속하고, 서버마다 대전을 여러 개 만들 수 있다.
-- 대전마다 팀은 **2개**, 기본값은 **레드팀(RED) / 블루팀(BLUE)** (`UNIQUE(match_id, side)`)
+- 팀은 **판(game_no)마다 2개**, 기본값은 **레드팀(RED) / 블루팀(BLUE)** (`UNIQUE(match_id, game_no, side)`). 대전을 만들 때 1판(`game_no = 1`) 팀 2개가 자동으로 생기고, 다른 판의 팀은 같은 대전에 `game_no`를 달리해 추가할 수 있다.
 - **대전 ↔ 서버회원 = N:M**이므로 **대전참가자(match_participant)**로 풀어낸다. 참가자는 `guild_member`를 참조하므로 **해당 서버에 가입한 사람만** 대전에 참가할 수 있다.
 - **대전 ↔ 대전기록 = 1:N** (판별 기록, `UNIQUE(match_id, game_no)`). 판마다 결과 캡쳐와 승리팀을 저장한다.
 - **대전기록 ↔ 판별 참가자 전적 = 1:N** (`match_record_player`, 판마다 10행). 참가자 · 팀 · K/D/A · CS · 승패를 사람 단위로 저장한다. 승점과 전적은 모두 이 테이블에서 계산한다.
@@ -129,7 +129,7 @@ erDiagram
     GUILD        ||--o{ MATCH             : "대전 (1:N)"
     GUILD_MEMBER ||--o{ MATCH_PARTICIPANT : "대전 참가"
     MATCH        ||--o{ MATCH_PARTICIPANT : "참가자 (최대 10명)"
-    MATCH        ||--|{ TEAM              : "보유 (정확히 2개)"
+    MATCH        ||--|{ TEAM              : "보유 (판마다 2개)"
     TEAM         ||--o{ MATCH_PARTICIPANT : "소속 (최대 5명)"
     MATCH        ||--o{ MATCH_RECORD      : "판별 기록 (1:N, 최대 game_count판)"
     MATCH_RECORD ||--|{ MATCH_RECORD_PLAYER : "참가자 전적 (10명)"
@@ -179,7 +179,8 @@ erDiagram
     TEAM {
         INTEGER id PK
         INTEGER match_id FK
-        TEXT    side "RED | BLUE  (UNIQUE: match_id + side)"
+        INTEGER game_no "판 번호 1~10 (기본 1)"
+        TEXT    side "RED | BLUE  (UNIQUE: match_id + game_no + side)"
     }
 
     MATCH_PARTICIPANT {
@@ -226,7 +227,7 @@ erDiagram
 | `account` | 디스코드 사용자 (전역) | `discord_user_id` UNIQUE. 사용자당 1개. `game_name`(롤 아이디)은 `lower(game_name)` 부분 UNIQUE 인덱스로 계정 간 중복 불가 |
 | `guild_member` | 서버별 가입 정보 (계정 등록/탈퇴) | `UNIQUE(guild_id, account_id)`. 탈퇴하면 `status = WITHDRAWN`으로 바꾸는 soft delete (기록 보존용). 다시 가입하면 같은 행을 `ACTIVE`로 되돌린다 |
 | `match` | 대전 1건 | `guild_id` NOT NULL. `status`로 모집 → 진행 → 종료 상태를 관리. `game_count` 1~10, 공개 메시지 위치 저장 |
-| `team` | 대전의 팀 (RED/BLUE) | 대전을 만들 때 2개를 자동 생성. `UNIQUE(match_id, side)`, `side IN ('RED','BLUE')` |
+| `team` | 대전의 판별 팀 (RED/BLUE) | 대전을 만들 때 1판(`game_no = 1`) 팀 2개를 자동 생성. `UNIQUE(match_id, game_no, side)`, `game_no` 1~10, `side IN ('RED','BLUE')`. 앱(참가자 팀 배정 · 승리팀 저장)은 아직 1판 팀을 쓴다(`teamRepository.findByMatch`) |
 | `match_participant` | 대전 참가자 (대전 등록/탈퇴, 포지션 선택, 팀 등록/탈퇴) | `UNIQUE(match_id, guild_member_id)`. 대전당 10명, 팀당 5명 제한, 참가자가 대전과 같은 서버 회원인지는 애플리케이션에서 검증 |
 | `match_record` | 판별 기록 (결과 캡쳐, 승리팀) | `UNIQUE(match_id, game_no)`. `game_no`는 1부터 `match.game_count`까지 |
 | `match_record_player` | 판별 참가자 전적 (팀 · 챔피언 · K/D/A · CS · 승패) | PK `(record_id, guild_member_id)`. 판마다 10명. K/D/A/CS는 0 이상(이전 버전 기록은 NULL). `is_win = 1` 1행 = 승점 1점 |
@@ -259,6 +260,7 @@ erDiagram
 - **v3**: `match_record_winner` → `match_record_player`(팀 · K/D/A · CS · 승패). 기존 기록은 그 대전 참가자 전원을 옮기고 승리자 목록으로 승패를 채운다(K/D/A/CS는 NULL). 기존 승점은 유지된다.
 - **v4**: `match_record_player.champion`(피어리스), `account.last_position`(참가 입력창 포지션 기본값) 추가.
 - **v5**: `account.last_game_name` → `game_name`(계정당 롤 아이디 1개, 중복 불가 인덱스), `last_position` → `preferred_position`(선호 포지션). 같은 아이디를 여러 계정이 쓰고 있었다면 먼저 만든 계정만 남기고 나머지는 비운다.
+- **v6**: `team.game_no` 추가(판별 팀), `UNIQUE(match_id, side)` → `UNIQUE(match_id, game_no, side)`. 팀 테이블을 다시 만들며 기존 팀은 **id를 유지**한 채 `game_no = 1`로 옮긴다(참가자 · 승리팀 참조 유지).
 - 스키마를 바꿀 때는 `schema.sql`(최신 모양)과 새 마이그레이션 버전을 **함께** 추가한다.
 
 ## 버튼 / 선택 메뉴 / 입력창 (`src/interactions/`)

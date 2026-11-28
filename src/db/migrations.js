@@ -105,6 +105,26 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // v5 -> v6: 팀을 판(game_no)별로 둘 수 있게 team.game_no 추가
+    //   UNIQUE(match_id, side) -> UNIQUE(match_id, game_no, side). 기존 팀은 1판(game_no = 1)으로 둔다.
+    //   팀 id는 그대로 옮기므로 match_participant.team_id / match_record.winner_team_id 참조가 유지된다.
+    version: 6,
+    up(db) {
+      db.exec(`
+        CREATE TABLE team_v6 (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id INTEGER NOT NULL REFERENCES match (id) ON DELETE CASCADE,
+            game_no  INTEGER NOT NULL DEFAULT 1 CHECK (game_no BETWEEN 1 AND 10),
+            side     TEXT    NOT NULL CHECK (side IN ('RED', 'BLUE')),
+            UNIQUE (match_id, game_no, side)
+        );
+        INSERT INTO team_v6 (id, match_id, game_no, side) SELECT id, match_id, 1, side FROM team;
+        DROP TABLE team;
+        ALTER TABLE team_v6 RENAME TO team;
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));

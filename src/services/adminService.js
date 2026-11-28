@@ -116,7 +116,7 @@ function createAdminService(repos, accounts) {
       .map((p) => ({ champion: p.champion, key: championKey(p.champion), gameNo: p.game_no }));
 
     const winnerSide = record?.winner_team_id
-      ? teams.findByMatch(match.id).find((t) => t.id === record.winner_team_id)?.side ?? null
+      ? teams.findAllByMatch(match.id).find((t) => t.id === record.winner_team_id)?.side ?? null
       : (record && [...red, ...blue].find((p) => p.is_win)?.side) || null;
 
     return { match, gameNo: no, record, red, blue, winnerSide, usedChampions, signature: rosterSignature(red, blue) };
