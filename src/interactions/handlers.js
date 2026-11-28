@@ -6,10 +6,7 @@ const {
   removeScreenshot,
   findPendingScreenshot,
   promotePendingScreenshot,
-  readPendingReading,
-  removePendingReading,
 } = require('../utils/screenshotStore');
-const { applyReading } = require('../integrations/geminiScoreboard');
 const adminViews = require('./adminViews');
 const { ACTIONS, buildId, parseId } = require('./ids');
 const views = require('./views');
@@ -433,9 +430,7 @@ const handlers = {
   async [ACTIONS.ADMIN_LOAD_OPEN](interaction, ctx, [matchId, gameNo, token]) {
     requireAdmin(ctx);
     const roster = ctx.services.admin.getGameRoster(ctx.guild.id, matchId, gameNo);
-    // Gemini가 읽었지만 저장하지 못한 값이 있으면 그 값으로 미리 채운다.
-    const reading = token === adminViews.EDIT_TOKEN ? null : await readPendingReading(ctx.config.recordsDir, interaction.guildId, token);
-    return interaction.showModal(adminViews.loadModal(applyReading(roster, reading), token));
+    return interaction.showModal(adminViews.loadModal(roster, token));
   },
 
   async [ACTIONS.ADMIN_LOAD_MODAL](interaction, ctx, [matchId, gameNo, token, signature]) {
@@ -463,8 +458,7 @@ const handlers = {
     }
 
     // 먼저 DB에 저장하고(검사 통과 시), 성공하면 대기 캡쳐를 이 판의 캡쳐로 옮긴다.
-    const editOnly = token === adminViews.EDIT_TOKEN; // 자동 저장 뒤 [수정]: 캡쳐는 이미 저장됨
-    const pending = editOnly ? null : await findPendingScreenshot(ctx.config.recordsDir, interaction.guildId, token);
+    const pending = await findPendingScreenshot(ctx.config.recordsDir, interaction.guildId, token);
     const result = ctx.services.admin.loadGameRecord({
       guildId: ctx.guild.id,
       discordUserId: interaction.user.id,
@@ -483,11 +477,9 @@ const handlers = {
         gameNo: result.gameNo,
       });
       ctx.services.admin.setGameScreenshot(result.match.id, result.gameNo, finalPath);
-    } else if (!editOnly) {
+    } else {
       note = '\n⚠️ 올린 이미지를 찾지 못해 캡쳐는 바꾸지 않았습니다. (하루가 지나 정리되었거나 이미 저장됨)';
     }
-
-    if (!editOnly) await removePendingReading(ctx.config.recordsDir, interaction.guildId, token);
 
     const points = new Map(
       result.players.map((p) => [p.discord_user_id, ctx.services.points.getStats(ctx.guild.id, p.discord_user_id).points]),

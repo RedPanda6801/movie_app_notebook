@@ -82,28 +82,6 @@ async function cleanupPendingScreenshots(dir, discordGuildId, now = Date.now()) 
   }
 }
 
-function pendingReadingPath(dir, discordGuildId, token) {
-  return path.join(guildDirOf(dir, discordGuildId), `${PENDING_PREFIX}${String(token).replace(/[^0-9A-Za-z_-]/g, '')}-read.json`);
-}
-
-/** 데이터 적재: Gemini가 읽은 값을 저장 전까지 보관한다. (입력창을 열 때 미리 채우는 용도) */
-async function savePendingReading(dir, discordGuildId, token, reading) {
-  await fs.promises.mkdir(guildDirOf(dir, discordGuildId), { recursive: true });
-  await fs.promises.writeFile(pendingReadingPath(dir, discordGuildId, token), JSON.stringify(reading), 'utf8');
-}
-
-async function readPendingReading(dir, discordGuildId, token) {
-  try {
-    return JSON.parse(await fs.promises.readFile(pendingReadingPath(dir, discordGuildId, token), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-async function removePendingReading(dir, discordGuildId, token) {
-  await fs.promises.rm(pendingReadingPath(dir, discordGuildId, token), { force: true });
-}
-
 async function removeScreenshot(filePath) {
   if (!filePath) return;
   await fs.promises.rm(filePath, { force: true });
@@ -115,8 +93,5 @@ module.exports = {
   findPendingScreenshot,
   promotePendingScreenshot,
   cleanupPendingScreenshots,
-  savePendingReading,
-  readPendingReading,
-  removePendingReading,
   PENDING_PREFIX,
 };

@@ -57,7 +57,7 @@ async function replyError(interaction, content, err) {
  * - 버튼/선택 메뉴/입력창: 모든 사용자 (버튼별 권한은 서비스에서 확인)
  * - 모든 상호작용을 서버별 로그 파일에 남긴다.
  */
-function createInteractionHandler({ services, commandMap, commandLogger, config, client, fetchImpl, geminiReader = null }) {
+function createInteractionHandler({ services, commandMap, commandLogger, config, client, fetchImpl }) {
   return async function onInteraction(interaction) {
     // 커맨드 옵션 자동완성 (예: /관리자 데이터적재 대전 번호)
     if (interaction.isAutocomplete?.()) {
@@ -66,7 +66,7 @@ function createInteractionHandler({ services, commandMap, commandLogger, config,
         const isAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ?? false;
         if (!command?.autocomplete || !interaction.inGuild() || !isAdmin) return await interaction.respond([]);
         const guild = services.guilds.ensureGuild(interaction.guildId, interaction.guild?.name ?? null);
-        await command.autocomplete(interaction, { services, guild, isAdmin, client, config, fetchImpl, geminiReader });
+        await command.autocomplete(interaction, { services, guild, isAdmin, client, config, fetchImpl });
       } catch (err) {
         console.error('자동완성 처리 실패:', err.message);
       }
@@ -98,7 +98,7 @@ function createInteractionHandler({ services, commandMap, commandLogger, config,
         throw new UserError('권한이 없습니다. 커맨드는 서버 관리자만 사용할 수 있습니다. 버튼을 이용해 주세요.');
       }
       const guild = services.guilds.ensureGuild(interaction.guildId, interaction.guild?.name ?? null);
-      const ctx = { services, guild, isAdmin, client, config, fetchImpl, geminiReader };
+      const ctx = { services, guild, isAdmin, client, config, fetchImpl };
 
       if (isCommand) {
         await command.execute(interaction, ctx);

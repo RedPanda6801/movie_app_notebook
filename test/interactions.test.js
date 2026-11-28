@@ -10,7 +10,6 @@ const { createServices } = require('../src/services');
 const { commands } = require('../src/commands');
 const { createInteractionHandler } = require('../src/interactions/router');
 const { createCommandLogger } = require('../src/utils/commandLogger');
-const { createGeminiReader } = require('../src/integrations/geminiScoreboard');
 
 const isEphemeral = (payload) => Boolean(payload && payload.flags & MessageFlags.Ephemeral);
 const textOf = (payload) => (typeof payload === 'string' ? payload : payload?.content ?? '');
@@ -46,19 +45,7 @@ function createHarness() {
   const services = createServices(db);
   const discord = createFakeDiscord();
   const config = { recordsDir: path.join(tmp, 'records') };
-  // 테스트 중간에 Gemini 읽기를 켜고 끌 수 있게 감싼다.
-  let reader = null;
-  const geminiReader = {
-    get enabled() {
-      return Boolean(reader?.enabled);
-    },
-    get model() {
-      return reader?.model;
-    },
-    read: (args) => reader.read(args),
-  };
   const handler = createInteractionHandler({
-    geminiReader,
     services,
     commandMap: new Map(commands.map((c) => [c.data.name, c])),
     commandLogger: createCommandLogger({ dir: path.join(tmp, 'logs') }),
@@ -128,27 +115,11 @@ function createHarness() {
     return calls;
   }
 
-  return { tmp, services, discord, send, setGeminiReader: (r) => (reader = r) };
-}
-
-/** 가짜 Gemini: respond(contents)가 돌려준 객체를 JSON 응답으로 준다. */
-function fakeGemini(respond) {
-  const requests = [];
-  const ai = {
-    models: {
-      async generateContent(req) {
-        requests.push(req);
-        const data = respond(req);
-        if (data instanceof Error) throw data;
-        return { text: JSON.stringify(data), candidates: [{ finishReason: 'STOP' }] };
-      },
-    },
-  };
-  return { reader: createGeminiReader({ ai, model: 'fake-gemini' }), requests };
+  return { tmp, services, discord, send };
 }
 
 test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → 시작 → 판 기록 → 종료', async () => {
-  const { tmp, services, discord, send, setGeminiReader } = createHarness();
+  const { tmp, services, discord, send } = createHarness();
   const users = Array.from({ length: 10 }, (_, i) => `u${i + 1}`);
 
   // 일반 사용자는 커맨드를 쓸 수 없다
@@ -505,115 +476,6 @@ test('버튼 흐름: 패널 → 계정 등록 → 대전 등록 → 참가 → �
   assert.equal(services.points.getStats(1, blueUser).points, 1, '2팀 승점 0 → 1');
   assert.equal(pendingFiles().length, 0, '대기 캡쳐가 판 캡쳐로 옮겨졌다');
   assert.ok(fs.existsSync(path.join(tmp, 'records', 'guild-1', 'match-1-game-1.png')));
-
-  // ───── 데이터적재 + Gemini 자동 읽기 (대전 #1 2판, 기록 없음 → 새로 만든다) ─────
-  const recordCount = () => services.admin.listLoadableMatches(1, 10).find((m) => m.id === 1).record_count;
-  const geminiPlayers = (count) =>
-    Array.from({ length: count }, (_, i) => ({
-      id: i + 1,
-      champion: `챔프${i + 1}`,
-      kills: i,
-      deaths: 1,
-      assists: 2,
-      cs: 100 + i,
-      win: i < 5,
-    }));
-
-  // 1) Gemini 오류 → 저장하지 않고 직접 입력 안내
-  setGeminiReader(fakeGemini(() => Object.assign(new Error('quota'), { status: 429 })).reader);
-  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 2, 이미지: upload } });
-  assert.match(JSON.stringify(calls[1].payload.embeds[0].toJSON()), /Gemini로 이미지를 읽지 못했습니다: 무료 사용량/);
-  assert.equal(recordCount(), 1);
-
-  // 저장하지 않은 대기 파일은 하루 뒤 정리된다. 이후 단계에서 새로 생긴 대기 파일만 본다.
-  const leftover = new Set(pendingFiles());
-  assert.equal(leftover.size, 1, '1)의 대기 캡쳐');
-  const newPending = () => pendingFiles().filter((f) => !leftover.has(f));
-
-  // 2) 한 명을 못 읽음 → 저장하지 않고, 읽은 값을 채운 입력창
-  let gemini = fakeGemini(() => ({ winning_team: '1팀', players: geminiPlayers(9), notes: '' }));
-  setGeminiReader(gemini.reader);
-  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 2, 이미지: upload } });
-  const partial = calls[1].payload;
-  assert.match(JSON.stringify(partial.embeds[0].toJSON()), /아직 저장하지 않았습니다.*읽지 못한 참가자/);
-  assert.equal(newPending().filter((f) => f.endsWith('-read.json')).length, 1, '읽은 값 보관');
-  assert.equal(recordCount(), 1, '저장하지 않음');
-  const prompt = gemini.requests[0].contents[1].text;
-  assert.match(prompt, /\[1팀\]\n1\. .*\n[\s\S]*\[2팀\]\n6\. /, '1팀 1~5번, 2팀 6~10번으로 보낸다');
-  assert.equal(gemini.requests[0].contents[0].inlineData.mimeType, 'image/png');
-  const partialOpen = partial.components[0].toJSON().components[0].custom_id;
-  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: partialOpen });
-  const partialModal = calls[0].payload.toJSON();
-  assert.equal(partialModal.components[0].component.options.find((o) => o.default)?.value, 'RED', '읽은 승리팀 선택됨');
-  assert.match(partialModal.components[1].component.value, /^1\. .* : 챔프1 0\/1\/2\/100$/m, '읽은 값으로 채움');
-  assert.match(partialModal.components[2].component.value, /^5\. .* : 챔피언 0\/0\/0\/0$/m, '못 읽은 사람은 빈 양식');
-  // 고쳐서 저장 → 대기 파일 정리
-  calls = await send({
-    kind: 'modal',
-    user: 'admin',
-    admin: true,
-    customId: partialModal.custom_id,
-    fields: {
-      winnerSide: ['RED'],
-      statsRED: partialModal.components[1].component.value,
-      statsBLUE: partialModal.components[2].component.value.replace('챔피언 0/0/0/0', '챔프10 1/1/1/1'),
-    },
-  });
-  assert.match(JSON.stringify(calls[1].payload.embeds[0].toJSON()), /데이터 적재 완료/);
-  assert.equal(recordCount(), 2);
-  assert.equal(newPending().length, 0, '대기 캡쳐와 읽은 값 파일 모두 정리');
-
-  // 3) 피어리스 위반(1판 챔피언) → 저장하지 않음
-  setGeminiReader(
-    fakeGemini(() => {
-      const players = geminiPlayers(10);
-      players[0].champion = '제라스';
-      return { winning_team: '1팀', players, notes: '' };
-    }).reader,
-  );
-  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 2, 이미지: upload } });
-  assert.match(JSON.stringify(calls[1].payload.embeds[0].toJSON()), /검사에 걸려 저장하지 않았습니다: 피어리스: 제라스/);
-  for (const f of newPending()) leftover.add(f);
-
-  // 4) 10명 + 승리팀 모두 읽음 → 바로 저장 (2판을 덮어쓴다: 2팀 승리)
-  setGeminiReader(
-    fakeGemini(() => ({
-      winning_team: '2팀',
-      players: geminiPlayers(10).map((p) => ({ ...p, win: p.id > 5 })),
-      notes: '6번 CS가 흐릿함',
-    })).reader,
-  );
-  calls = await send({ kind: 'command', user: 'admin', admin: true, command: '관리자', sub: '데이터적재', opts: { 대전: 1, 판: 2, 이미지: upload } });
-  const auto = calls[1].payload;
-  const autoText = JSON.stringify(auto.embeds[0].toJSON());
-  assert.match(autoText, /Gemini\(fake-gemini\)가 이미지에서 읽은 값으로 저장했습니다/);
-  assert.match(autoText, /Gemini 메모: 6번 CS가 흐릿함/);
-  assert.match(autoText, /챔프6\*\* 5\/1\/2 · CS 105/);
-  assert.equal(services.points.getStats(1, blueUser).points, 2, '2팀 1판 + 2판 승리');
-  assert.equal(services.points.getStats(1, redUser).points, 0);
-  assert.equal(newPending().length, 0, '자동 저장하면 대기 캡쳐가 판 캡쳐로 옮겨진다');
-  assert.ok(fs.existsSync(path.join(tmp, 'records', 'guild-1', 'match-1-game-2.png')));
-
-  // [수정] → 저장된 값으로 채운 입력창 → 저장 (캡쳐 안내 없음)
-  const editId = auto.components[0].toJSON().components[0].custom_id;
-  assert.equal(editId, 'admin.loadOpen|1|2|-');
-  calls = await send({ kind: 'button', user: 'admin', admin: true, customId: editId });
-  const editModal = calls[0].payload.toJSON();
-  assert.match(editModal.components[2].component.value, /챔프6 5\/1\/2\/105/);
-  calls = await send({
-    kind: 'modal',
-    user: 'admin',
-    admin: true,
-    customId: editModal.custom_id,
-    fields: {
-      winnerSide: ['BLUE'],
-      statsRED: editModal.components[1].component.value,
-      statsBLUE: editModal.components[2].component.value.replace('챔프6 5/1/2/105', '챔프6 5/1/2/150'),
-    },
-  });
-  assert.equal(textOf(calls[1].payload), '', '이미지 못 찾음 안내 없음');
-  assert.match(JSON.stringify(calls[1].payload.embeds[0].toJSON()), /챔프6\*\* 5\/1\/2 · CS 150/);
-  setGeminiReader(null);
 
   // 끝난 대전의 옛 버튼
   calls = await send({ kind: 'button', user: 'u2', customId: 'match.join|1' });
