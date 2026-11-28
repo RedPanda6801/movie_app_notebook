@@ -55,12 +55,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_match_active_per_guild
     ON match (guild_id)
     WHERE status IN ('RECRUITING', 'IN_PROGRESS');
 
--- 대전의 팀 (대전당 RED / BLUE 2개)
+-- 대전의 팀 (판마다 RED / BLUE 2개, game_no 1 = 대전을 만들 때 생기는 기본 팀)
 CREATE TABLE IF NOT EXISTS team (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     match_id INTEGER NOT NULL REFERENCES match (id) ON DELETE CASCADE,
+    game_no  INTEGER NOT NULL DEFAULT 1 CHECK (game_no BETWEEN 1 AND 10),
     side     TEXT    NOT NULL CHECK (side IN ('RED', 'BLUE')),
-    UNIQUE (match_id, side)
+    UNIQUE (match_id, game_no, side)
 );
 
 -- 대전 참가자 (대전 <-> 서버회원 N:M)

@@ -60,6 +60,15 @@ test('기존(v1) DB를 최신 스키마로 올리고 기존 승점을 유지한�
   const columns = db.prepare('PRAGMA table_info(account)').all().map((c) => c.name);
   assert.ok(columns.includes('game_name') && columns.includes('preferred_position'));
   assert.ok(!columns.includes('last_game_name'));
+  // v6: 팀은 판(game_no)별. 기존 팀은 id를 유지한 채 1판으로 옮겨지고, 같은 대전에 다른 판의 팀을 넣을 수 있다.
+  assert.deepEqual(db.prepare('SELECT id, match_id, game_no, side FROM team ORDER BY id').all(), [
+    { id: 1, match_id: 1, game_no: 1, side: 'RED' },
+    { id: 2, match_id: 1, game_no: 1, side: 'BLUE' },
+  ]);
+  assert.equal(db.prepare('SELECT team_id FROM match_participant WHERE guild_member_id = 1').get().team_id, 1);
+  db.prepare("INSERT INTO team (match_id, game_no, side) VALUES (1, 2, 'RED'), (1, 2, 'BLUE')").run();
+  assert.throws(() => db.prepare("INSERT INTO team (match_id, game_no, side) VALUES (1, 2, 'RED')").run(), /UNIQUE/);
+  assert.equal(db.pragma('foreign_key_check').length, 0, '팀 참조가 깨지지 않는다');
   db.close();
 
   // 다시 열어도 마이그레이션이 중복 적용되지 않는다
