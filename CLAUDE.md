@@ -182,8 +182,8 @@ erDiagram
     MATCH_PARTICIPANT {
         INTEGER id PK
         INTEGER match_id        FK
-        INTEGER guild_member_id FK "UNIQUE: match_id + guild_member_id"
-        INTEGER team_id         FK "nullable - 셔플 전에는 미배정"
+        INTEGER guild_member_id FK "UNIQUE: match_id + guild_member_id + team_id"
+        INTEGER team_id         FK "nullable - 셔플 전에는 미배정 (판별 팀마다 한 행 가능)"
         TEXT    position "TOP | MID | JUNGLE | ADC | SUPPORT (nullable)"
         INTEGER is_team_locked "1 = 팀 직접 등록 → 셔플 제외"
         TEXT    joined_at
@@ -224,7 +224,7 @@ erDiagram
 | `guild_member` | 서버별 가입 정보 (계정 등록/탈퇴) | `UNIQUE(guild_id, account_id)`. 탈퇴하면 `status = WITHDRAWN`으로 바꾸는 soft delete (기록 보존용). 다시 가입하면 같은 행을 `ACTIVE`로 되돌린다 |
 | `match` | 대전 1건 | `guild_id` NOT NULL. `status`로 모집 → 진행 → 종료 상태를 관리. `game_count` 1~10, 공개 메시지 위치 저장 |
 | `team` | 대전의 판별 팀 (RED/BLUE) | 대전을 만들 때 1판(`game_no = 1`) 팀 2개를 자동 생성. `UNIQUE(match_id, game_no, side)`, `game_no` 1~10, `side IN ('RED','BLUE')`. 앱(참가자 팀 배정 · 승리팀 저장)은 아직 1판 팀을 쓴다(`teamRepository.findByMatch`) |
-| `match_participant` | 대전 참가자 (대전 등록/탈퇴, 포지션 선택, 팀 등록/탈퇴) | `UNIQUE(match_id, guild_member_id)`. 대전당 10명, 팀당 5명 제한, 참가자가 대전과 같은 서버 회원인지는 애플리케이션에서 검증 |
+| `match_participant` | 대전 참가자 (대전 등록/탈퇴, 포지션 선택, 팀 등록/탈퇴) | `UNIQUE(match_id, guild_member_id, team_id)` (판별 팀마다 한 행 가능). 봇은 **기본 행**(팀 미정 또는 1판 팀)만 읽고 바꾼다(`matchParticipantRepository`의 `BASE_ROW`). 대전당 10명, 팀당 5명 제한, 참가자가 대전과 같은 서버 회원인지는 애플리케이션에서 검증 |
 | `match_record` | 판별 기록 (결과 캡쳐, 승리팀) | `UNIQUE(match_id, game_no)`. `game_no`는 1부터 `match.game_count`까지 |
 | `match_record_player` | 판별 참가자 전적 (팀 · 챔피언 · K/D/A · CS · 승패) | PK `(record_id, guild_member_id)`. 판마다 10명. K/D/A/CS는 0 이상(이전 버전 기록은 NULL). `is_win = 1` 1행 = 승점 1점 |
 
@@ -257,6 +257,7 @@ erDiagram
 - **v4**: `match_record_player.champion`(피어리스), `account.last_position`(참가 입력창 포지션 기본값) 추가.
 - **v5**: `account.last_game_name` → `game_name`(계정당 롤 아이디 1개, 중복 불가 인덱스), `last_position` → `preferred_position`(선호 포지션). 같은 아이디를 여러 계정이 쓰고 있었다면 먼저 만든 계정만 남기고 나머지는 비운다.
 - **v6**: `team.game_no` 추가(판별 팀), `UNIQUE(match_id, side)` → `UNIQUE(match_id, game_no, side)`. 팀 테이블을 다시 만들며 기존 팀은 **id를 유지**한 채 `game_no = 1`로 옮긴다(참가자 · 승리팀 참조 유지).
+- **v7**: `match_participant`의 `UNIQUE(match_id, guild_member_id)` → `UNIQUE(match_id, guild_member_id, team_id)`. 테이블을 다시 만들며 기존 행은 id를 유지한다.
 - 스키마를 바꿀 때는 `schema.sql`(최신 모양)과 새 마이그레이션 버전을 **함께** 추가한다.
 
 ## 버튼 / 선택 메뉴 / 입력창 (`src/interactions/`)

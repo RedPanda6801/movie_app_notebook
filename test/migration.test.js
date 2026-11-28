@@ -6,6 +6,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { openDatabase } = require('../src/db');
 const { createServices } = require('../src/services');
+const { createRepositories } = require('../src/repositories');
 const { LATEST_VERSION } = require('../src/db/migrations');
 
 // v1 스키마(이전 버전 봇이 만든 DB)
@@ -69,6 +70,17 @@ test('기존(v1) DB를 최신 스키마로 올리고 기존 승점을 유지한�
   db.prepare("INSERT INTO team (match_id, game_no, side) VALUES (1, 2, 'RED'), (1, 2, 'BLUE')").run();
   assert.throws(() => db.prepare("INSERT INTO team (match_id, game_no, side) VALUES (1, 2, 'RED')").run(), /UNIQUE/);
   assert.equal(db.pragma('foreign_key_check').length, 0, '팀 참조가 깨지지 않는다');
+  // v7: 같은 참가자를 다른 판의 팀으로 한 행 더 넣을 수 있다. (같은 팀으로 두 번은 불가)
+  const game2Red = db.prepare("SELECT id FROM team WHERE match_id = 1 AND game_no = 2 AND side = 'RED'").get().id;
+  db.prepare('INSERT INTO match_participant (match_id, guild_member_id, team_id) VALUES (1, 1, ?)').run(game2Red);
+  assert.throws(() => db.prepare('INSERT INTO match_participant (match_id, guild_member_id, team_id) VALUES (1, 1, 1)').run(), /UNIQUE/);
+  // 봇은 기본 행(1판 팀)만 본다
+  const { participants } = createRepositories(db);
+  assert.equal(participants.countByMatch(1), 2, '2판 팀 행은 참가자 수에 안 들어간다');
+  assert.equal(participants.findByMatchAndMember(1, 1).team_id, 1, '기본 행(1판 팀)을 찾는다');
+  participants.resetShuffledByMatch(1);
+  assert.equal(db.prepare('SELECT team_id FROM match_participant WHERE team_id = ?').get(game2Red)?.team_id, game2Red, '셔플 초기화는 다른 판 행을 건드리지 않는다');
+  assert.equal(db.pragma('foreign_key_check').length, 0);
   db.close();
 
   // 다시 열어도 마이그레이션이 중복 적용되지 않는다

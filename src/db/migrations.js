@@ -125,6 +125,34 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    // v6 -> v7: 판별 팀마다 참가자 행을 둘 수 있게 UNIQUE(match_id, guild_member_id)
+    //   -> UNIQUE(match_id, guild_member_id, team_id). 기존 행은 id를 유지한 채 그대로 옮긴다.
+    version: 7,
+    up(db) {
+      db.exec(`
+        CREATE TABLE match_participant_v7 (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            match_id        INTEGER NOT NULL REFERENCES match (id) ON DELETE CASCADE,
+            guild_member_id INTEGER NOT NULL REFERENCES guild_member (id),
+            team_id         INTEGER REFERENCES team (id),
+            position        TEXT    CHECK (position IN ('TOP', 'MID', 'JUNGLE', 'ADC', 'SUPPORT')),
+            is_team_locked  INTEGER NOT NULL DEFAULT 0 CHECK (is_team_locked IN (0, 1)),
+            joined_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            game_name       TEXT,
+            UNIQUE (match_id, guild_member_id, team_id)
+        );
+        INSERT INTO match_participant_v7
+              (id, match_id, guild_member_id, team_id, position, is_team_locked, joined_at, game_name)
+        SELECT id, match_id, guild_member_id, team_id, position, is_team_locked, joined_at, game_name
+          FROM match_participant;
+        DROP TABLE match_participant;
+        ALTER TABLE match_participant_v7 RENAME TO match_participant;
+        CREATE INDEX IF NOT EXISTS ix_participant_member ON match_participant (guild_member_id);
+        CREATE INDEX IF NOT EXISTS ix_participant_team ON match_participant (team_id);
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = Math.max(1, ...MIGRATIONS.map((m) => m.version));

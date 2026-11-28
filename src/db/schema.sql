@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS team (
     UNIQUE (match_id, game_no, side)
 );
 
--- 대전 참가자 (대전 <-> 서버회원 N:M)
+-- 대전 참가자 (대전 <-> 서버회원 N:M). 판별 팀(team.game_no)마다 한 행을 둘 수 있다.
+-- 봇은 기본 행(팀 미정 또는 1판 팀)만 쓴다.
 CREATE TABLE IF NOT EXISTS match_participant (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     match_id        INTEGER NOT NULL REFERENCES match (id) ON DELETE CASCADE,
@@ -74,7 +75,7 @@ CREATE TABLE IF NOT EXISTS match_participant (
     is_team_locked  INTEGER NOT NULL DEFAULT 0 CHECK (is_team_locked IN (0, 1)),
     joined_at       TEXT    NOT NULL DEFAULT (datetime('now')),
     game_name       TEXT,   -- 이번 대전에서 쓰는 롤 아이디 (예: Hide on bush#KR1)
-    UNIQUE (match_id, guild_member_id)
+    UNIQUE (match_id, guild_member_id, team_id)
 );
 
 -- 판별 기록 (대전 1:N). 판마다 결과 캡쳐와 승리팀을 남긴다. 참가자별 전적은 match_record_player
